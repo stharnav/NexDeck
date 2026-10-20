@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="purple_200">#FFBB86FC</color>
+    <color name="purple_500">#FF6200EE</color>
+    <color name="purple_700">#FF3700B3</color>
+    <color name="teal_200">#FF03DAC5</color>
+    <color name="teal_700">#FF018786</color>
+    <color name="black">#FF000000</color>
+    <color name="white">#FFFFFFFF</color>
+
+    <!-- Console launcher palette (Steam Deck style) -->
+    <color name="console_background">#FF0E1116</color>
+    <color name="console_surface">#FF22262E</color>
+    <color name="console_stroke">#FF343A45</color>
+    <color name="console_accent">#FF4FA3FF</color>
+    <color name="console_accent_soft">#FF66C0F4</color>
+    <color name="console_text_primary">#FFE8EBF0</color>
+    <color name="console_text_secondary">#FF9AA3B0</color>
+</resources>

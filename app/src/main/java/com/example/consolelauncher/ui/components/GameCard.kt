@@ -125,17 +125,5 @@ fun GameCard(
     }
 }
 
-private fun androidx.compose.ui.input.key.KeyEvent.isSelectKey(): Boolean =
-    when (nativeKeyEvent.keyCode) {
-        KeyEvent.KEYCODE_ENTER,
-        KeyEvent.KEYCODE_DPAD_CENTER,
-        KeyEvent.KEYCODE_NUMPAD_ENTER,
-        KeyEvent.KEYCODE_SPACE,
-        KeyEvent.KEYCODE_BUTTON_A,
-        -> true
-
-        else -> false
-    }
-
 private val CARD_CORNER = 14.dp
 private val ICON_SIZE = 72.dp

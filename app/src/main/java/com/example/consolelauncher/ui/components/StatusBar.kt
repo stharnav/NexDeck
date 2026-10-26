@@ -54,9 +54,10 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
-/** The three tabs of the launcher. */
+/** The tabs of the launcher. */
 enum class LauncherTab(val title: String) {
     HOME("HOME"),
+    GAMES("GAMES"),
     RECENT("RECENT"),
     ALL_APPS("ALL APPS"),
 }

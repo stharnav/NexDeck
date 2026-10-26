@@ -2,6 +2,8 @@ package com.example.consolelauncher.ui
 
 import android.content.Intent
 import android.view.KeyEvent
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -19,6 +21,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -34,6 +37,8 @@ import androidx.compose.ui.unit.sp
 import com.example.consolelauncher.data.AppEntry
 import com.example.consolelauncher.data.AppRepository
 import com.example.consolelauncher.data.RecentAppsStore
+import com.example.consolelauncher.data.RetroArchRepository
+import com.example.consolelauncher.data.RetroGameEntry
 import com.example.consolelauncher.ui.components.LauncherGrid
 import com.example.consolelauncher.ui.components.LauncherRow
 import com.example.consolelauncher.ui.components.LauncherTab
@@ -42,7 +47,8 @@ import com.example.consolelauncher.ui.theme.ConsoleTextSecondary
 
 /**
  * The launcher home screen. It shows the applications installed on the device as console style
- * tiles and can be driven with a touch screen, a D-pad or the arrow keys.
+ * tiles, plus the games that RetroArch knows about, and can be driven with a touch screen, a D-pad
+ * or the arrow keys.
  */
 @Composable
 fun LauncherRoot(
@@ -52,15 +58,49 @@ fun LauncherRoot(
     val context = LocalContext.current
     val repository = remember { AppRepository(context) }
     val recentStore = remember { RecentAppsStore(context) }
+    val retroRepository = remember { RetroArchRepository(context) }
+    val playlistAccess = remember { retroRepository.getPlaylistAccess() }
 
     var apps by remember { mutableStateOf<List<AppEntry>>(emptyList()) }
     var recents by remember { mutableStateOf<List<AppEntry>>(emptyList()) }
     var selectedTab by remember { mutableStateOf(LauncherTab.HOME) }
 
+    var retroGames by remember { mutableStateOf<List<RetroGameEntry>>(emptyList()) }
+    var retroArchAvailable by remember { mutableStateOf(false) }
+    var retroHasPlaylistAccess by remember { mutableStateOf(false) }
+    var retroLoading by remember { mutableStateOf(false) }
+    var retroLoaded by remember { mutableStateOf(false) }
+    var retroError by remember { mutableStateOf<String?>(null) }
+    var retroRevision by remember { mutableIntStateOf(0) }
+
+    val playlistPicker = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.StartActivityForResult(),
+    ) { result ->
+        if (playlistAccess.handleResult(result.resultCode, result.data)) {
+            retroError = null
+            retroRevision++
+        }
+    }
+
     LaunchedEffect(refreshKey) {
         val loaded = repository.loadLaunchableApps()
         apps = loaded
         recents = recentsFrom(recentStore, loaded)
+    }
+
+    LaunchedEffect(refreshKey, retroRevision) {
+        retroRepository.refresh()
+        retroArchAvailable = retroRepository.isAvailable()
+        retroHasPlaylistAccess = retroRepository.hasPlaylistAccess()
+
+        if (retroArchAvailable && retroHasPlaylistAccess) {
+            retroLoading = true
+            retroGames = retroRepository.loadRetroGames()
+            retroLoading = false
+        } else {
+            retroGames = emptyList()
+        }
+        retroLoaded = true
     }
 
     fun launch(entry: AppEntry) {
@@ -70,6 +110,31 @@ fun LauncherRoot(
             ?: return
         intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         context.startActivity(intent)
+    }
+
+    fun launchGame(entry: RetroGameEntry) {
+        retroError = null
+        retroRepository.grantRomAccess(entry.romPath, entry.launchPackage)
+        try {
+            context.startActivity(entry.launchIntent)
+            retroRepository.packageName?.let { pkg ->
+                recentStore.record(pkg)
+                recents = recentsFrom(recentStore, apps)
+            }
+        } catch (e: Exception) {
+            retroError = "Could not launch ${entry.label}. Is RetroArch still installed?"
+        }
+    }
+
+    fun handleGameAction(action: LauncherRow.Action) {
+        when (action.key) {
+            ACTION_GRANT_PLAYLISTS, ACTION_CHANGE_PLAYLISTS -> {
+                retroError = null
+                playlistAccess.requestAccess(playlistPicker)
+            }
+
+            ACTION_REFRESH_GAMES -> retroRevision++
+        }
     }
 
     Box(
@@ -118,18 +183,34 @@ fun LauncherRoot(
                 when (selectedTab) {
                     LauncherTab.HOME -> LauncherGrid(
                         rows = homeRows(recents, apps),
-                        onLaunch = ::launch,
+                        onLaunchApp = ::launch,
+                        autoFocusFirstItem = true,
+                    )
+
+                    LauncherTab.GAMES -> LauncherGrid(
+                        rows = gameRows(
+                            loaded = retroLoaded,
+                            available = retroArchAvailable,
+                            hasPlaylistAccess = retroHasPlaylistAccess,
+                            loading = retroLoading,
+                            games = retroGames,
+                            error = retroError,
+                        ),
+                        onLaunchApp = ::launch,
+                        onLaunchGame = ::launchGame,
+                        onAction = ::handleGameAction,
+                        onLoadThumbnail = { path -> retroRepository.loadThumbnail(path) },
                         autoFocusFirstItem = true,
                     )
 
                     LauncherTab.RECENT -> LauncherGrid(
                         rows = recentRows(recents),
-                        onLaunch = ::launch,
+                        onLaunchApp = ::launch,
                     )
 
                     LauncherTab.ALL_APPS -> LauncherGrid(
                         rows = allAppsRows(apps),
-                        onLaunch = ::launch,
+                        onLaunchApp = ::launch,
                     )
                 }
             }
@@ -216,6 +297,85 @@ private fun allAppsRows(apps: List<AppEntry>): List<LauncherRow> = buildList {
         }
 }
 
+/**
+ * The GAMES tab: either the games from RetroArch's playlists, or an explanation of what is
+ * missing, with a focusable action to fix it.
+ */
+private fun gameRows(
+    loaded: Boolean,
+    available: Boolean,
+    hasPlaylistAccess: Boolean,
+    loading: Boolean,
+    games: List<RetroGameEntry>,
+    error: String?,
+): List<LauncherRow> = buildList {
+    add(LauncherRow.Section("GAMES"))
+
+    when {
+        !loaded || (loading && games.isEmpty()) -> {
+            add(LauncherRow.Message("Reading RetroArch playlists..."))
+        }
+
+        !available -> {
+            add(
+                LauncherRow.Message(
+                    "RetroArch is not installed. Install RetroArch to play your ROM collection from here.",
+                ),
+            )
+        }
+
+        !hasPlaylistAccess -> {
+            add(
+                LauncherRow.Message(
+                    "Grant access to the folder where RetroArch keeps its playlists to list your games here.",
+                ),
+            )
+            add(
+                LauncherRow.Action(
+                    key = ACTION_GRANT_PLAYLISTS,
+                    label = "GRANT PLAYLIST ACCESS",
+                    description = "Pick the RetroArch folder that contains the playlists folder",
+                ),
+            )
+        }
+
+        games.isEmpty() -> {
+            add(LauncherRow.Message(error ?: "No games found in the selected folder."))
+            add(
+                LauncherRow.Action(
+                    key = ACTION_GRANT_PLAYLISTS,
+                    label = "CHOOSE ANOTHER FOLDER",
+                    description = "Pick the folder that contains your RetroArch .lpl playlists",
+                ),
+            )
+            add(
+                LauncherRow.Action(
+                    key = ACTION_REFRESH_GAMES,
+                    label = "REFRESH",
+                    description = "Scan the selected folder again",
+                ),
+            )
+        }
+
+        else -> {
+            if (error != null) add(LauncherRow.Message(error))
+            games.groupBy { it.playlistName }
+                .toSortedMap(String.CASE_INSENSITIVE_ORDER)
+                .forEach { (playlist, entries) ->
+                    add(LauncherRow.Section(playlist.uppercase(), key = "playlist_$playlist"))
+                    entries.forEach { add(LauncherRow.Game(it.gridKey, it)) }
+                }
+            add(
+                LauncherRow.Action(
+                    key = ACTION_CHANGE_PLAYLISTS,
+                    label = "CHANGE PLAYLIST FOLDER",
+                    description = "Scan a different RetroArch playlists folder",
+                ),
+            )
+        }
+    }
+}
+
 private fun recentsFrom(store: RecentAppsStore, apps: List<AppEntry>): List<AppEntry> {
     val byPackage = apps.associateBy { it.packageName }
     return store.recentPackages().mapNotNull { byPackage[it] }
@@ -230,3 +390,7 @@ private fun LauncherTab.previous(): LauncherTab {
     val values = LauncherTab.entries
     return values[(ordinal - 1 + values.size) % values.size]
 }
+
+private const val ACTION_GRANT_PLAYLISTS = "games_grant_playlists"
+private const val ACTION_CHANGE_PLAYLISTS = "games_change_playlists"
+private const val ACTION_REFRESH_GAMES = "games_refresh"

@@ -68,6 +68,7 @@ fun LauncherRoot(
     var retroGames by remember { mutableStateOf<List<RetroGameEntry>>(emptyList()) }
     var retroArchAvailable by remember { mutableStateOf(false) }
     var retroHasPlaylistAccess by remember { mutableStateOf(false) }
+    var retroHasArtworkAccess by remember { mutableStateOf(false) }
     var retroLoading by remember { mutableStateOf(false) }
     var retroLoaded by remember { mutableStateOf(false) }
     var retroError by remember { mutableStateOf<String?>(null) }
@@ -92,6 +93,7 @@ fun LauncherRoot(
         retroRepository.refresh()
         retroArchAvailable = retroRepository.isAvailable()
         retroHasPlaylistAccess = retroRepository.hasPlaylistAccess()
+        retroHasArtworkAccess = retroRepository.hasThumbnailAccess()
 
         if (retroArchAvailable && retroHasPlaylistAccess) {
             retroLoading = true
@@ -134,6 +136,11 @@ fun LauncherRoot(
             }
 
             ACTION_REFRESH_GAMES -> retroRevision++
+
+            ACTION_SHOW_ARTWORK -> {
+                retroError = null
+                playlistAccess.requestAccess(playlistPicker, startInParent = true)
+            }
         }
     }
 
@@ -192,6 +199,7 @@ fun LauncherRoot(
                             loaded = retroLoaded,
                             available = retroArchAvailable,
                             hasPlaylistAccess = retroHasPlaylistAccess,
+                            hasArtworkAccess = retroHasArtworkAccess,
                             loading = retroLoading,
                             games = retroGames,
                             error = retroError,
@@ -199,7 +207,7 @@ fun LauncherRoot(
                         onLaunchApp = ::launch,
                         onLaunchGame = ::launchGame,
                         onAction = ::handleGameAction,
-                        onLoadThumbnail = { path -> retroRepository.loadThumbnail(path) },
+                        onLoadThumbnail = { paths -> retroRepository.loadThumbnail(paths) },
                         autoFocusFirstItem = true,
                     )
 
@@ -305,6 +313,7 @@ private fun gameRows(
     loaded: Boolean,
     available: Boolean,
     hasPlaylistAccess: Boolean,
+    hasArtworkAccess: Boolean,
     loading: Boolean,
     games: List<RetroGameEntry>,
     error: String?,
@@ -359,6 +368,15 @@ private fun gameRows(
 
         else -> {
             if (error != null) add(LauncherRow.Message(error))
+            if (!hasArtworkAccess) {
+                add(
+                    LauncherRow.Action(
+                        key = ACTION_SHOW_ARTWORK,
+                        label = "SHOW GAME ARTWORK",
+                        description = "Grant access to the RetroArch folder that contains the thumbnails for box art",
+                    ),
+                )
+            }
             games.groupBy { it.playlistName }
                 .toSortedMap(String.CASE_INSENSITIVE_ORDER)
                 .forEach { (playlist, entries) ->
@@ -394,3 +412,4 @@ private fun LauncherTab.previous(): LauncherTab {
 private const val ACTION_GRANT_PLAYLISTS = "games_grant_playlists"
 private const val ACTION_CHANGE_PLAYLISTS = "games_change_playlists"
 private const val ACTION_REFRESH_GAMES = "games_refresh"
+private const val ACTION_SHOW_ARTWORK = "games_show_artwork"

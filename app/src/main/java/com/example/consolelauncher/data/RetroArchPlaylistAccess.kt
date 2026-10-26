@@ -35,6 +35,12 @@ class RetroArchPlaylistAccess(context: Context) {
         /** Playlists normally live directly in the picked folder, but allow a little nesting. */
         private const val MAX_PLAYLIST_DEPTH = 3
 
+        /** RetroArch data folders that never contain playlists, skipped to keep the scan fast. */
+        private val SKIPPED_FOLDERS = setOf(
+            "thumbnails", "saves", "states", "screenshots", "cheats",
+            "downloads", "system", "temp", "logs", "config",
+        )
+
         private const val PRIMARY_STORAGE = "/storage/emulated/0/"
         private const val LEGACY_PRIMARY_STORAGE = "/sdcard/"
     }
@@ -55,18 +61,37 @@ class RetroArchPlaylistAccess(context: Context) {
     /**
      * Launches the SAF directory picker to let user grant access to RetroArch playlists.
      * The caller should pass an ActivityResultLauncher<Intent> for the result.
+     *
+     * @param startInParent open the picker one folder above the current grant, which is the
+     * RetroArch folder itself (it holds both `playlists` and `thumbnails`).
      */
-    fun requestAccess(launcher: ActivityResultLauncher<Intent>) {
-        Log.d(TAG, "Requesting SAF access to RetroArch playlists")
+    fun requestAccess(launcher: ActivityResultLauncher<Intent>, startInParent: Boolean = false) {
+        Log.d(TAG, "Requesting SAF access to RetroArch playlists (parent=$startInParent)")
         val intent = Intent(Intent.ACTION_OPEN_DOCUMENT_TREE).apply {
-            // Pre-select RetroArch's documents provider so the picker opens on its data directory.
-            putExtra(
-                DocumentsContract.EXTRA_INITIAL_URI,
-                Uri.parse("content://$RETROARCH_DOCUMENTS_AUTHORITY/"),
-            )
+            val initialUri = if (startInParent) parentDocumentUri() else null
+            if (initialUri != null) {
+                putExtra(DocumentsContract.EXTRA_INITIAL_URI, initialUri)
+            } else {
+                // Pre-select RetroArch's documents provider so the picker opens on its data directory.
+                putExtra(
+                    DocumentsContract.EXTRA_INITIAL_URI,
+                    Uri.parse("content://$RETROARCH_DOCUMENTS_AUTHORITY/"),
+                )
+            }
             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION)
         }
         launcher.launch(intent)
+    }
+
+    /** Document URI of the folder above the currently granted one, used to pre-navigate the picker. */
+    private fun parentDocumentUri(): Uri? {
+        val treeUri = getPlaylistsUri() ?: return null
+        val documentId = runCatching { DocumentsContract.getTreeDocumentId(treeUri) }.getOrNull()
+            ?: return null
+        val parentId = documentId.trimEnd('/').substringBeforeLast('/', missingDelimiterValue = "")
+        val authority = treeUri.authority ?: return null
+        if (parentId.isEmpty()) return null
+        return DocumentsContract.buildDocumentUri(authority, parentId)
     }
 
     /**
@@ -84,6 +109,16 @@ class RetroArchPlaylistAccess(context: Context) {
                         uri,
                         Intent.FLAG_GRANT_READ_URI_PERMISSION,
                     )
+                    val previous = getPlaylistsUri()
+                    if (previous != null && previous != uri) {
+                        // The new grant replaces the old one; do not keep the wider access around.
+                        runCatching {
+                            contentResolver.releasePersistableUriPermission(
+                                previous,
+                                Intent.FLAG_GRANT_READ_URI_PERMISSION,
+                            )
+                        }
+                    }
                     prefs.edit().putString(KEY_PLAYLISTS_URI, uri.toString()).apply()
                     Log.d(TAG, "Persisted access to playlists directory: $uri")
                     return true
@@ -168,7 +203,9 @@ class RetroArchPlaylistAccess(context: Context) {
 
                     when {
                         mime == DocumentsContract.Document.MIME_TYPE_DIR -> {
-                            collectPlaylists(treeUri, id, depth + 1, result)
+                            if (name.lowercase() !in SKIPPED_FOLDERS) {
+                                collectPlaylists(treeUri, id, depth + 1, result)
+                            }
                         }
 
                         name.endsWith(".lpl", ignoreCase = true) &&
@@ -195,6 +232,48 @@ class RetroArchPlaylistAccess(context: Context) {
             Log.w(TAG, "Failed to read playlist file: $uri", e)
             null
         }
+    }
+
+    /**
+     * Absolute path of the RetroArch `thumbnails` folder that belongs to the granted playlists
+     * folder, if it can be derived.
+     *
+     * RetroArch keeps both folders side by side (`RetroArch/playlists` and
+     * `RetroArch/thumbnails`), but playlists do not store the artwork paths, so the folder has to
+     * be worked out from the granted tree.
+     */
+    fun thumbnailsDirectory(): String? {
+        val absolute = treeAbsolutePath() ?: return null
+        return when {
+            absolute.endsWith("/thumbnails", ignoreCase = true) -> absolute
+            absolute.endsWith("/playlists", ignoreCase = true) ->
+                absolute.substringBeforeLast('/') + "/thumbnails"
+            else -> "$absolute/thumbnails"
+        }
+    }
+
+    /**
+     * Checks if the granted tree also gives access to the artwork. The user may have granted only
+     * the `playlists` folder, in which case the thumbnails next to it cannot be read.
+     */
+    fun hasThumbnailAccess(): Boolean {
+        val tree = treeAbsolutePath() ?: return false
+        val thumbnails = thumbnailsDirectory() ?: return false
+        return thumbnails == tree || thumbnails.startsWith("$tree/")
+    }
+
+    /** Absolute path of the granted tree, if the provider uses a file system style document id. */
+    private fun treeAbsolutePath(): String? {
+        val treeUri = getPlaylistsUri() ?: return null
+        val documentId = runCatching { DocumentsContract.getTreeDocumentId(treeUri) }.getOrNull()
+            ?: return null
+        return when {
+            documentId.startsWith("primary:") ->
+                PRIMARY_STORAGE + documentId.removePrefix("primary:")
+            documentId.startsWith(LEGACY_PRIMARY_STORAGE) -> documentId
+            documentId.startsWith("/") -> documentId
+            else -> null
+        }?.trimEnd('/')
     }
 
     /**

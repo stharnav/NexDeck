@@ -14,8 +14,12 @@ data class RetroGameEntry(
     val playlistName: String,
     /** Path exactly as stored in the playlist: absolute path, `content://` URI or `saf://…`. */
     val romPath: String,
-    /** Absolute path or content URI of the box art, loaded lazily by the card. */
-    val thumbnailPath: String?,
+    /**
+     * Candidate locations of the box art, most specific first. RetroArch usually does not store
+     * artwork paths in its playlists, so these are derived from the `thumbnails` folder next to
+     * the playlists (`Named_Boxarts`, `Named_Snaps`, `Named_Titles`). Loaded lazily by the card.
+     */
+    val thumbnailPaths: List<String>,
     /** RetroArch variant that owns the game. */
     val launchPackage: String,
     val launchIntent: Intent,

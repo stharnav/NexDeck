@@ -83,7 +83,7 @@ fun LauncherGrid(
     onLaunchApp: (AppEntry) -> Unit,
     onLaunchGame: (RetroGameEntry) -> Unit = {},
     onAction: (LauncherRow.Action) -> Unit = {},
-    onLoadThumbnail: suspend (String) -> ImageBitmap? = { null },
+    onLoadThumbnail: suspend (List<String>) -> ImageBitmap? = { null },
     autoFocusFirstItem: Boolean = false,
     modifier: Modifier = Modifier,
 ) {
@@ -151,7 +151,7 @@ fun LauncherGrid(
                     thumbnailLoader = onLoadThumbnail,
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(CARD_HEIGHT)
+                        .height(GAME_CARD_HEIGHT)
                         .thenIf(isFirstFocusable) { focusRequester(firstItemRequester) },
                 )
             }
@@ -252,4 +252,7 @@ private fun MessageText(text: String) {
 
 private const val COLUMNS = 4
 private val CARD_HEIGHT = 100.dp
+
+/** Game tiles are taller so the box art is shown as a cover, not as a tiny icon. */
+private val GAME_CARD_HEIGHT = 138.dp
 private val ACTION_CORNER = 12.dp

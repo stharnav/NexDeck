@@ -40,6 +40,12 @@ class RetroArchRepository(context: Context) {
         private const val CORE_SUFFIX = "_libretro.so"
         private const val DETECT = "DETECT"
 
+        /** Sub folders RetroArch uses for the artwork of a playlist, in order of preference. */
+        private val THUMBNAIL_SUBDIRS = listOf("Named_Boxarts", "Named_Snaps", "Named_Titles")
+
+        /** Characters RetroArch scrubs from a label before using it as a file name. */
+        private val THUMBNAIL_UNSAFE_CHARS = "&*/:`\"<>?\\|".toCharArray()
+
         private val RETROARCH_VARIANTS = listOf(
             "com.retroarch",
             "com.retroarch.aarch64",
@@ -171,7 +177,7 @@ class RetroArchRepository(context: Context) {
                 val launchIntent = buildLaunchIntent(romPath, resolvedCorePath, launchPackage) ?: continue
                 val label = item.optString("label", "").trim()
                     .ifEmpty { romPath.substringAfterLast('/').substringBeforeLast('.') }
-                val thumbnail = item.optString("thumbnail", "").trim().takeIf { it.isNotEmpty() }
+                val storedThumbnail = item.optString("thumbnail", "").trim().takeIf { it.isNotEmpty() }
 
                 games.add(
                     RetroGameEntry(
@@ -183,7 +189,7 @@ class RetroArchRepository(context: Context) {
                             ?: "Auto-detect",
                         playlistName = playlistName,
                         romPath = romPath,
-                        thumbnailPath = thumbnail,
+                        thumbnailPaths = buildThumbnailCandidates(playlistName, label, storedThumbnail),
                         launchPackage = launchPackage,
                         launchIntent = launchIntent,
                     ),
@@ -199,6 +205,56 @@ class RetroArchRepository(context: Context) {
 
     private fun String.trimCoreSuffix(): String =
         removeSuffix(CORE_SUFFIX_ANDROID).removeSuffix(CORE_SUFFIX).removeSuffix(".so")
+
+    /**
+     * Builds the places where RetroArch may keep the artwork of a game.
+     *
+     * Playlists normally do not contain a `thumbnail` entry, so the standard layout is used:
+     * `<RetroArch>/thumbnails/<playlist>/Named_Boxarts/<label>.png`, then snaps and titles. The
+     * short name (the label up to the first bracket) is tried as well, because some thumbnail
+     * packs are named that way.
+     */
+    private fun buildThumbnailCandidates(
+        playlistName: String,
+        label: String,
+        storedThumbnail: String?,
+    ): List<String> = buildList {
+        val thumbnailsDir = playlistAccess.thumbnailsDirectory()
+
+        if (!storedThumbnail.isNullOrEmpty()) {
+            add(
+                when {
+                    storedThumbnail.startsWith("content://") ||
+                        storedThumbnail.startsWith("file://") ||
+                        storedThumbnail.startsWith("/") -> storedThumbnail
+                    thumbnailsDir != null -> "$thumbnailsDir/$storedThumbnail"
+                    else -> storedThumbnail
+                },
+            )
+        }
+
+        if (thumbnailsDir == null) return@buildList
+
+        val names = linkedSetOf(label.toThumbnailFileName())
+        label.substringBefore(" (").takeIf { it.isNotBlank() && it != label }
+            ?.let { names.add(it.toThumbnailFileName()) }
+
+        for (subdir in THUMBNAIL_SUBDIRS) {
+            for (name in names) {
+                add("$thumbnailsDir/$playlistName/$subdir/$name")
+            }
+        }
+    }
+
+    /** File name RetroArch uses for the artwork of [this] label. */
+    private fun String.toThumbnailFileName(): String {
+        val scrubbed = buildString(length) {
+            for (char in this@toThumbnailFileName) {
+                append(if (char in THUMBNAIL_UNSAFE_CHARS) '_' else char)
+            }
+        }
+        return "$scrubbed.png"
+    }
 
     /**
      * Builds the intent that makes RetroArch boot straight into a game.
@@ -243,18 +299,25 @@ class RetroArchRepository(context: Context) {
     }
 
     /**
-     * Loads box art for a playlist entry. Failures are remembered so a missing thumbnail is only
-     * looked up once.
+     * Loads artwork for a playlist entry, trying the candidates in order. Failures are remembered
+     * so a game without artwork is only looked up once.
      */
-    suspend fun loadThumbnail(path: String): ImageBitmap? = withContext(Dispatchers.IO) {
-        thumbnailCache[path]?.let { return@withContext it }
-        if (path in missingThumbnails) return@withContext null
+    suspend fun loadThumbnail(paths: List<String>): ImageBitmap? = withContext(Dispatchers.IO) {
+        if (paths.isEmpty()) return@withContext null
+        val cacheKey = paths.joinToString("\n")
+        thumbnailCache[cacheKey]?.let { return@withContext it }
+        if (cacheKey in missingThumbnails) return@withContext null
 
-        val bitmap = decodeThumbnail(path)
+        var bitmap: ImageBitmap? = null
+        for (path in paths) {
+            bitmap = decodeThumbnail(path)
+            if (bitmap != null) break
+        }
+
         if (bitmap != null) {
-            thumbnailCache[path] = bitmap
+            thumbnailCache[cacheKey] = bitmap
         } else {
-            missingThumbnails.add(path)
+            missingThumbnails.add(cacheKey)
         }
         bitmap
     }
@@ -280,6 +343,9 @@ class RetroArchRepository(context: Context) {
 
     /** Checks if SAF access to the playlists is granted. */
     fun hasPlaylistAccess(): Boolean = playlistAccess.hasAccess()
+
+    /** Checks if the granted folder also contains the artwork folder. */
+    fun hasThumbnailAccess(): Boolean = playlistAccess.hasThumbnailAccess()
 
     /** Gets the [RetroArchPlaylistAccess] instance for the permission flow. */
     fun getPlaylistAccess(): RetroArchPlaylistAccess = playlistAccess

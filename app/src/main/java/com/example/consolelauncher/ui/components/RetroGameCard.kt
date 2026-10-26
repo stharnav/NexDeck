@@ -11,11 +11,12 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.layout.wrapContentSize
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -47,15 +48,16 @@ import com.example.consolelauncher.ui.theme.ConsoleTextPrimary
 import com.example.consolelauncher.ui.theme.ConsoleTextSecondary
 
 /**
- * A console style "game card" tile for a game from a RetroArch playlist. The box art is loaded
- * lazily so that a big playlist does not have to decode every thumbnail up front.
+ * A console style "game card" tile for a game from a RetroArch playlist. The tile shows the box
+ * art from RetroArch, loaded lazily so that a big playlist does not have to decode every
+ * thumbnail up front.
  */
 @Composable
 fun RetroGameCard(
     entry: RetroGameEntry,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
-    thumbnailLoader: suspend (String) -> ImageBitmap? = { null },
+    thumbnailLoader: suspend (List<String>) -> ImageBitmap? = { null },
 ) {
     var focused by remember { mutableStateOf(false) }
     val scale by animateFloatAsState(
@@ -65,8 +67,12 @@ fun RetroGameCard(
     )
 
     val currentLoader = rememberUpdatedState(thumbnailLoader)
-    val thumbnail by produceState<ImageBitmap?>(initialValue = null, entry.thumbnailPath) {
-        value = entry.thumbnailPath?.let { currentLoader.value(it) }
+    val artwork by produceState<ImageBitmap?>(initialValue = null, entry.thumbnailPaths) {
+        value = if (entry.thumbnailPaths.isEmpty()) {
+            null
+        } else {
+            currentLoader.value(entry.thumbnailPaths)
+        }
     }
 
     Row(
@@ -99,28 +105,29 @@ fun RetroGameCard(
             .padding(10.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
+        // The box art keeps the portrait aspect ratio of the artwork RetroArch ships, so the
+        // cover is shown as a cover instead of being squeezed into a square icon.
         Box(
             modifier = Modifier
-                .size(ICON_SIZE)
-                .clip(RoundedCornerShape(12.dp))
+                .fillMaxHeight()
+                .aspectRatio(ARTWORK_ASPECT_RATIO)
+                .clip(RoundedCornerShape(10.dp))
                 .background(Color.White.copy(alpha = 0.04f)),
             contentAlignment = Alignment.Center,
         ) {
-            val art = thumbnail
+            val art = artwork
             if (art != null) {
                 Image(
                     bitmap = art,
                     contentDescription = null,
-                    contentScale = ContentScale.Crop,
-                    modifier = Modifier.size(ICON_SIZE),
+                    contentScale = ContentScale.Fit,
+                    modifier = Modifier.fillMaxSize(),
                 )
             } else {
                 Text(
                     text = "🎮",
-                    fontSize = 32.sp,
-                    modifier = Modifier
-                        .size(ICON_SIZE)
-                        .wrapContentSize(Alignment.Center),
+                    fontSize = 22.sp,
+                    color = Color.White.copy(alpha = 0.25f),
                 )
             }
         }
@@ -132,7 +139,7 @@ fun RetroGameCard(
                 text = entry.label,
                 style = MaterialTheme.typography.titleSmall,
                 color = ConsoleTextPrimary,
-                maxLines = 1,
+                maxLines = 2,
                 overflow = TextOverflow.Ellipsis,
             )
             Spacer(Modifier.height(2.dp))
@@ -148,4 +155,6 @@ fun RetroGameCard(
 }
 
 private val CARD_CORNER = 14.dp
-private val ICON_SIZE = 72.dp
+
+/** Portrait ratio of the box art RetroArch stores in `Named_Boxarts`. */
+private const val ARTWORK_ASPECT_RATIO = 2f / 3f

@@ -9,6 +9,11 @@ import android.net.wifi.SupplicantState
 import android.net.wifi.WifiInfo
 import android.net.wifi.WifiManager
 import android.os.BatteryManager
+import android.os.Build
+import android.telephony.PhoneStateListener
+import android.telephony.ServiceState
+import android.telephony.SignalStrength
+import android.telephony.TelephonyManager
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -142,7 +147,7 @@ private fun StatusIndicators() {
         )
         SignalBars(
             level = status.signalLevel,
-            active = status.wifiConnected,
+            active = status.wifiConnected || status.cellConnected,
         )
         Spacer(Modifier.width(6.dp))
         BatteryGlyph(
@@ -277,11 +282,24 @@ private data class SystemStatus(
     val clock: String,
     val batteryLevel: Int,
     val charging: Boolean,
-    val signalLevel: Int,
+    val wifiLevel: Int,
     val wifiConnected: Boolean,
     val wifiEnabled: Boolean,
-)
+    val cellConnected: Boolean,
+    val cellularLevel: Int,
+) {
+    /** The bars show whichever network is actually carrying the traffic. */
+    val signalLevel: Int
+        get() = when {
+            wifiConnected -> wifiLevel
+            cellConnected -> cellularLevel
+            else -> 0
+        }
+}
 
+// The pre-R phone state listener classes are deprecated but are the only permission-free
+// push source for cellular strength on API 26-29; the suppression is scoped to this function.
+@Suppress("DEPRECATION")
 @Composable
 private fun rememberSystemStatus(context: Context): androidx.compose.runtime.State<SystemStatus> {
     val status = remember {
@@ -290,9 +308,11 @@ private fun rememberSystemStatus(context: Context): androidx.compose.runtime.Sta
                 clock = context.readClock(),
                 batteryLevel = context.readBatteryLevel(),
                 charging = false,
-                signalLevel = 0,
+                wifiLevel = 0,
                 wifiConnected = false,
                 wifiEnabled = false,
+                cellConnected = false,
+                cellularLevel = 0,
             )
         )
     }
@@ -315,19 +335,75 @@ private fun rememberSystemStatus(context: Context): androidx.compose.runtime.Sta
         onDispose { context.unregisterReceiver(receiver) }
     }
 
+    // Below R the cached signal strength is not readable, so the phone state listener pushes
+    // the cellular level. It is the same mechanism the platform status bar used pre-R; signal
+    // strength listening never required a permission.
+    DisposableEffect(context) {
+        val telephony = context.telephonyManager()
+        val listener: PhoneStateListener? =
+            if (telephony != null && Build.VERSION.SDK_INT < Build.VERSION_CODES.R) {
+                object : PhoneStateListener() {
+                    override fun onSignalStrengthsChanged(signalStrength: SignalStrength?) {
+                        if (signalStrength == null) return
+                        status.value = status.value.copy(cellularLevel = signalStrength.level)
+                    }
+                }.also {
+                    try {
+                        telephony.listen(it, PhoneStateListener.LISTEN_SIGNAL_STRENGTHS)
+                    } catch (_: RuntimeException) {
+                        // Some builds refuse the registration; the bars will just stay dark.
+                    }
+                }
+            } else {
+                null
+            }
+        onDispose {
+            if (listener != null) telephony?.listen(listener, PhoneStateListener.LISTEN_NONE)
+        }
+    }
+
     androidx.compose.runtime.LaunchedEffect(Unit) {
         while (true) {
             val wifi = context.readWifiState()
             status.value = status.value.copy(
                 clock = context.readClock(),
-                signalLevel = wifi.level,
+                wifiLevel = wifi.level,
                 wifiConnected = wifi.connected,
                 wifiEnabled = wifi.enabled,
             )
+            context.readCellularStatus(status)
+
             delay(1_000L)
         }
     }
     return status
+}
+
+/**
+ * Refreshes the cellular fields of [status]. On R and above the cached modem reading answers
+ * synchronously; on older versions the phone state listener owns the level, so only the
+ * service state is refreshed here.
+ */
+@Suppress("DEPRECATION")
+private fun Context.readCellularStatus(status: androidx.compose.runtime.MutableState<SystemStatus>) {
+    val telephony = telephonyManager()
+    val cellConnected = hasCellularService()
+    val level = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+        try {
+            telephony?.signalStrength?.level ?: 0
+        } catch (_: RuntimeException) {
+            // Radio-less TVs throw UnsupportedOperationException, and some builds keep the
+            // reading permission-gated; both cases leave the level untouched.
+            null
+        }
+    } else {
+        null
+    }
+    status.value = if (level != null) {
+        status.value.copy(cellConnected = cellConnected, cellularLevel = level)
+    } else {
+        status.value.copy(cellConnected = cellConnected)
+    }
 }
 
 private fun Context.readClock(): String =
@@ -343,6 +419,9 @@ private fun Context.readBatteryLevel(): Int {
  *
  * All networks are inspected instead of only the active one: when a VPN or the cellular network
  * is the default route, the Wi-Fi connection is still there and the icon has to show it.
+ *
+ * The RSSI comes from the capability snapshot's signal strength field; the `WifiInfo` embedded
+ * in `transportInfo` is not reliably delivered to third-party apps on every build.
  */
 @Suppress("DEPRECATION")
 private fun Context.readWifiState(): WifiState {
@@ -356,7 +435,19 @@ private fun Context.readWifiState(): WifiState {
         val capabilities = manager.getNetworkCapabilities(network) ?: return@forEach
         if (!capabilities.hasTransport(NetworkCapabilities.TRANSPORT_WIFI)) return@forEach
         connected = true
-        val networkRssi = (capabilities.transportInfo as? WifiInfo)?.rssi ?: Int.MIN_VALUE
+        // Some builds strip the WifiInfo out of transportInfo for third-party apps; the
+        // bearer-specific signal strength field (RSSI for Wi-Fi) survives that redaction.
+        val fromTransportInfo = (capabilities.transportInfo as? WifiInfo)?.rssi ?: Int.MIN_VALUE
+        val fromSnapshot = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            capabilities.signalStrength
+        } else {
+            Int.MIN_VALUE
+        }
+        val networkRssi = when {
+            isValidRssi(fromTransportInfo) -> fromTransportInfo
+            isValidRssi(fromSnapshot) -> fromSnapshot
+            else -> fromTransportInfo
+        }
         if (networkRssi > rssi) rssi = networkRssi
     }
 
@@ -370,7 +461,7 @@ private fun Context.readWifiState(): WifiState {
         }
     }
 
-    val level = if (connected && rssi != Int.MIN_VALUE) rssiToSignalLevel(rssi) else 0
+    val level = if (connected && isValidRssi(rssi)) rssiToSignalLevel(rssi) else 0
     return WifiState(connected = connected, enabled = enabled, level = level)
 }
 
@@ -379,6 +470,9 @@ private data class WifiState(
     val enabled: Boolean,
     val level: Int,
 )
+
+/** An RSSI this low is either the unconnected placeholder (or a redacted reading) and carries no level. */
+private fun isValidRssi(rssi: Int): Boolean = rssi > -100
 
 /** The same buckets the platform uses for the signal strength. */
 private fun rssiToSignalLevel(rssi: Int): Int = when {
@@ -402,3 +496,28 @@ private fun Context.connectivityManager(): ConnectivityManager? =
     getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
 private fun Context.wifiManager(): WifiManager? =
     getSystemService(Context.WIFI_SERVICE) as? WifiManager
+private fun Context.telephonyManager(): TelephonyManager? =
+    getSystemService(Context.TELEPHONY_SERVICE) as? TelephonyManager
+
+/**
+ * Whether a cellular radio is registered with a carrier: either the radio reports service or
+ * there is a live cellular network in the connectivity manager. Devices without a radio fail
+ * both checks, so the bars never claim a cellular signal.
+ */
+@Suppress("DEPRECATION")
+private fun Context.hasCellularService(): Boolean {
+    val telephony = telephonyManager() ?: return false
+    // Newer Android builds gate the service state behind READ_PHONE_STATE; without the
+    // permission the binder call throws instead of returning an empty state.
+    val serviceState = try {
+        telephony.serviceState
+    } catch (_: SecurityException) {
+        null
+    }
+    if (serviceState?.state == ServiceState.STATE_IN_SERVICE) return true
+    val manager = connectivityManager() ?: return false
+    return manager.allNetworks.any { network ->
+        manager.getNetworkCapabilities(network)
+            ?.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) == true
+    }
+}

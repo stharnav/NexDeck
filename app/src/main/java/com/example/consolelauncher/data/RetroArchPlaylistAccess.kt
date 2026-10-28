@@ -46,6 +46,12 @@ class RetroArchPlaylistAccess(context: Context) {
 
         /** RetroArch folder that holds the cover art of a system. */
         private const val BOXARTS_DIR = "Named_Boxarts"
+
+        /** The built-in playlist that records the last played games, newest first. */
+        private const val HISTORY_PLAYLIST_FILE = "content_history.lpl"
+
+        /** File names under which RetroArch stores its content history playlist. */
+        private val HISTORY_PLAYLIST_FILES = setOf(HISTORY_PLAYLIST_FILE, "history.lpl")
     }
 
     /**
@@ -156,15 +162,30 @@ class RetroArchPlaylistAccess(context: Context) {
      * The selection argument is applied in memory: not every documents provider supports SQL
      * selections, and the external storage provider does not filter on display names.
      */
-    suspend fun listPlaylistFiles(): List<Uri> = withContext(Dispatchers.IO) {
-        val treeUri = getPlaylistsUri() ?: return@withContext emptyList()
+    suspend fun listPlaylistFiles(): List<Uri> = scanPlaylists().playlists
+
+    /**
+     * Document URI of RetroArch's built-in content history playlist (`content_history.lpl`),
+     * which lists the games that were played last, newest first. Null when the granted tree does
+     * not contain it.
+     */
+    suspend fun findHistoryPlaylist(): Uri? = scanPlaylists().history
+
+    private suspend fun scanPlaylists(): PlaylistScan = withContext(Dispatchers.IO) {
+        val empty = PlaylistScan(emptyList(), null)
+        val treeUri = getPlaylistsUri() ?: return@withContext empty
         val rootDocumentId = runCatching { DocumentsContract.getTreeDocumentId(treeUri) }.getOrNull()
-            ?: return@withContext emptyList()
+            ?: return@withContext empty
 
         val playlists = mutableListOf<Uri>()
-        collectPlaylists(treeUri, rootDocumentId, 0, playlists)
+        val histories = mutableListOf<Pair<String, Uri>>()
+        collectPlaylists(treeUri, rootDocumentId, 0, playlists, histories)
         Log.d(TAG, "Found ${playlists.size} playlist files")
-        playlists
+        PlaylistScan(
+            playlists = playlists,
+            history = histories.firstOrNull { it.first == HISTORY_PLAYLIST_FILE }?.second
+                ?: histories.firstOrNull()?.second,
+        )
     }
 
     private fun collectPlaylists(
@@ -172,6 +193,7 @@ class RetroArchPlaylistAccess(context: Context) {
         documentId: String,
         depth: Int,
         result: MutableList<Uri>,
+        histories: MutableList<Pair<String, Uri>>,
     ) {
         if (depth > MAX_PLAYLIST_DEPTH) return
 
@@ -207,13 +229,21 @@ class RetroArchPlaylistAccess(context: Context) {
                     when {
                         mime == DocumentsContract.Document.MIME_TYPE_DIR -> {
                             if (name.lowercase() !in SKIPPED_FOLDERS) {
-                                collectPlaylists(treeUri, id, depth + 1, result)
+                                collectPlaylists(treeUri, id, depth + 1, result, histories)
                             }
+                        }
+
+                        name.lowercase() in HISTORY_PLAYLIST_FILES -> {
+                            // The built-in history playlists are kept for the home screen history
+                            // and excluded from the regular system playlists.
+                            histories.add(
+                                name.lowercase() to DocumentsContract.buildDocumentUriUsingTree(treeUri, id),
+                            )
+                            Log.d(TAG, "Found history playlist: $name")
                         }
 
                         name.endsWith(".lpl", ignoreCase = true) &&
                             !name.startsWith("content_", ignoreCase = true) -> {
-                            // Built-in history playlists (content_history.lpl, ...) are skipped.
                             result.add(DocumentsContract.buildDocumentUriUsingTree(treeUri, id))
                             Log.d(TAG, "Found playlist: $name")
                         }
@@ -256,11 +286,13 @@ class RetroArchPlaylistAccess(context: Context) {
     }
 
     /**
-     * Lists the cover art of a system's `thumbnails/<system>/Named_Boxarts` folder, mapped from
-     * the file base name (case/spacing-insensitive) to its document URI. Returns an empty map
-     * when the granted tree does not contain the folder, e.g. when only `playlists` was picked.
+     * Lists the cover art of the `thumbnails/<system>/Named_Boxarts` folders of [systemFolders],
+     * mapped from the file base name (case/spacing-insensitive) to its document URI. The folders
+     * are tried in order, so callers can pass alternative spellings of a system name. Returns an
+     * empty map when the granted tree does not contain the folder, e.g. when only `playlists` was
+     * picked.
      */
-    suspend fun listBoxArt(playlistName: String): Map<String, Uri> = withContext(Dispatchers.IO) {
+    suspend fun listBoxArt(systemFolders: List<String>): Map<String, Uri> = withContext(Dispatchers.IO) {
         val treeUri = getPlaylistsUri() ?: return@withContext emptyMap()
         val rootDocumentId = runCatching { DocumentsContract.getTreeDocumentId(treeUri) }.getOrNull()
             ?: return@withContext emptyMap()
@@ -271,28 +303,32 @@ class RetroArchPlaylistAccess(context: Context) {
             return@withContext emptyMap()
         }
 
-        val systemId = childDirectoryId(treeUri, thumbnailsId, playlistName)
-            ?: childDirectoryIdNormalized(treeUri, thumbnailsId, playlistName)
-        if (systemId == null) {
-            Log.d(TAG, "No '$playlistName' folder below the thumbnails folder")
-            return@withContext emptyMap()
-        }
-
-        val boxArtsId = childDirectoryId(treeUri, systemId, BOXARTS_DIR)
-        if (boxArtsId == null) {
-            Log.d(TAG, "No $BOXARTS_DIR folder below the '$playlistName' thumbnails")
-            return@withContext emptyMap()
-        }
-
         val artByBaseName = mutableMapOf<String, Uri>()
-        listDocuments(treeUri, boxArtsId) { id, displayName, isDirectory ->
-            if (!isDirectory) {
-                artByBaseName[displayName.substringBeforeLast('.').normalizedKey()] =
-                    DocumentsContract.buildDocumentUriUsingTree(treeUri, id)
+        for (systemFolder in systemFolders) {
+            val systemId = childDirectoryId(treeUri, thumbnailsId, systemFolder)
+                ?: childDirectoryIdNormalized(treeUri, thumbnailsId, systemFolder)
+            if (systemId == null) {
+                Log.d(TAG, "No '$systemFolder' folder below the thumbnails folder")
+                continue
             }
-            null
+
+            val boxArtsId = childDirectoryId(treeUri, systemId, BOXARTS_DIR)
+            if (boxArtsId == null) {
+                Log.d(TAG, "No $BOXARTS_DIR folder below the '$systemFolder' thumbnails")
+                continue
+            }
+
+            listDocuments(treeUri, boxArtsId) { id, displayName, isDirectory ->
+                if (!isDirectory) {
+                    val key = displayName.substringBeforeLast('.').normalizedKey()
+                    if (!artByBaseName.containsKey(key)) {
+                        artByBaseName[key] = DocumentsContract.buildDocumentUriUsingTree(treeUri, id)
+                    }
+                }
+                null
+            }
         }
-        Log.d(TAG, "Found ${artByBaseName.size} box art files for '$playlistName'")
+        Log.d(TAG, "Found ${artByBaseName.size} box art files for $systemFolders")
         artByBaseName
     }
 
@@ -418,3 +454,10 @@ class RetroArchPlaylistAccess(context: Context) {
 
 /** Comparable form of a document name: lowercase letters and digits only. */
 internal fun String.normalizedKey(): String = lowercase().filter { it.isLetterOrDigit() }
+
+/** Result of scanning the granted tree for RetroArch playlists. */
+private data class PlaylistScan(
+    val playlists: List<Uri>,
+    /** Content history playlist (`content_history.lpl`), newest run first. */
+    val history: Uri?,
+)

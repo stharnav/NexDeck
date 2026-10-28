@@ -48,6 +48,15 @@ class RetroArchRepository(context: Context) {
             "com.retroarch.ra32",
             "com.retroarch.ra64",
         )
+
+        /** Playlist name of RetroArch's built-in content history playlist. */
+        private const val HISTORY_PLAYLIST = "content_history"
+
+        /** Folder names under which RetroArch keeps the history cover art. */
+        private val HISTORY_BOXART_FOLDERS = listOf(HISTORY_PLAYLIST, "history")
+
+        /** Games shown in the home screen history section. */
+        private const val HISTORY_LIMIT = 10
     }
 
     /** Package name of the installed RetroArch variant, or null when it is not installed. */
@@ -124,6 +133,32 @@ class RetroArchRepository(context: Context) {
         )
     }
 
+    /**
+     * Loads RetroArch's content history (`content_history.lpl`): the last played games in the
+     * order RetroArch recorded them, limited to [HISTORY_LIMIT] entries. Returns an empty list
+     * if RetroArch is not installed, no playlist access was granted or nothing was played yet.
+     */
+    suspend fun loadHistory(): List<RetroGameEntry> = withContext(Dispatchers.IO) {
+        if (resolvePackage() == null) {
+            Log.d(TAG, "RetroArch not installed")
+            return@withContext emptyList()
+        }
+        if (!playlistAccess.hasAccess()) {
+            Log.d(TAG, "No SAF access granted to the RetroArch playlists folder")
+            return@withContext emptyList()
+        }
+
+        val historyUri = playlistAccess.findHistoryPlaylist()
+        if (historyUri == null) {
+            Log.d(TAG, "No content history playlist found in the granted folder")
+            return@withContext emptyList()
+        }
+
+        val history = parsePlaylistFile(historyUri, HISTORY_PLAYLIST, HISTORY_BOXART_FOLDERS)
+        Log.d(TAG, "Loaded ${history.size} history entries")
+        history.take(HISTORY_LIMIT)
+    }
+
     /** Display name of a SAF document, used to name the playlist. */
     private fun getDisplayName(uri: Uri): String? = try {
         contentResolver.query(
@@ -142,10 +177,14 @@ class RetroArchRepository(context: Context) {
     }
 
     /** Parses a single `.lpl` playlist file (JSON format). */
-    private suspend fun parsePlaylistFile(playlistUri: Uri, playlistName: String): List<RetroGameEntry> {
+    private suspend fun parsePlaylistFile(
+        playlistUri: Uri,
+        playlistName: String,
+        boxArtFolders: List<String> = listOf(playlistName),
+    ): List<RetroGameEntry> {
         val jsonText = playlistAccess.readPlaylistFile(playlistUri) ?: return emptyList()
         // Cover art of this system, keyed by file base name without extension.
-        val boxArtByBaseName = playlistAccess.listBoxArt(playlistName)
+        val boxArtByBaseName = playlistAccess.listBoxArt(boxArtFolders)
         return try {
             val json = JSONObject(jsonText)
             val defaultCorePath = json.optString("default_core_path", "").trim()

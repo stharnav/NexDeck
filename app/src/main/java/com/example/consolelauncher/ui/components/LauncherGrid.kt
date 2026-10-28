@@ -61,8 +61,8 @@ sealed interface LauncherRow {
     /** [key] has to be unique within the screen, an app can show up in more than one section. */
     data class App(val key: String, val entry: AppEntry) : LauncherRow
 
-    /** A game from a RetroArch playlist. */
-    data class Game(val key: String, val entry: RetroGameEntry) : LauncherRow
+    /** A horizontally scrollable row of games, e.g. the RetroArch history on the home screen. */
+    data class GameRow(val key: String, val games: List<RetroGameEntry>) : LauncherRow
 
     data class Message(val text: String) : LauncherRow
 
@@ -74,7 +74,7 @@ sealed interface LauncherRow {
 private val LauncherRow.focusKey: String?
     get() = when (this) {
         is LauncherRow.App -> key
-        is LauncherRow.Game -> key
+        is LauncherRow.GameRow -> games.firstOrNull()?.gridKey
         is LauncherRow.Action -> key
         is LauncherRow.Section, is LauncherRow.Letter, is LauncherRow.Message -> null
     }
@@ -89,6 +89,8 @@ fun LauncherGrid(
     onLaunchApp: (AppEntry) -> Unit,
     onLaunchGame: (RetroGameEntry) -> Unit = {},
     onAction: (LauncherRow.Action) -> Unit = {},
+    onLoadThumbnail: suspend (String) -> ImageBitmap? = { null },
+    onLoadBoxArt: suspend (String) -> ImageBitmap? = { null },
     autoFocusFirstItem: Boolean = false,
     modifier: Modifier = Modifier,
 ) {
@@ -117,14 +119,14 @@ fun LauncherGrid(
                     is LauncherRow.Section -> "section_${row.key}"
                     is LauncherRow.Letter -> "letter_${row.letter}"
                     is LauncherRow.App -> row.key
-                    is LauncherRow.Game -> row.key
+                    is LauncherRow.GameRow -> row.key
                     is LauncherRow.Message -> "message_${row.text}"
                     is LauncherRow.Action -> row.key
                 }
             },
             span = { row ->
                 when (row) {
-                    is LauncherRow.App, is LauncherRow.Game -> GridItemSpan(1)
+                    is LauncherRow.App -> GridItemSpan(1)
                     else -> GridItemSpan(maxLineSpan)
                 }
             },
@@ -150,13 +152,20 @@ fun LauncherGrid(
                         .height(CARD_HEIGHT)
                         .thenIf(isFirstFocusable) { focusRequester(firstItemRequester) },
                 )
-                is LauncherRow.Game -> RetroGameCard(
-                    entry = row.entry,
-                    onClick = { onLaunchGame(row.entry) },
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(GAME_CARD_HEIGHT)
-                        .thenIf(isFirstFocusable) { focusRequester(firstItemRequester) },
+                is LauncherRow.GameRow -> GameSystemRow(
+                    games = row.games,
+                    onLaunchGame = onLaunchGame,
+                    onLoadThumbnail = onLoadThumbnail,
+                    onLoadBoxArt = onLoadBoxArt,
+                    modifier = Modifier.fillMaxWidth(),
+                    firstItemRequester = if (
+                        autoFocusFirstItem &&
+                        row.games.firstOrNull()?.gridKey == firstFocusableKey
+                    ) {
+                        firstItemRequester
+                    } else {
+                        null
+                    },
                 )
             }
         }

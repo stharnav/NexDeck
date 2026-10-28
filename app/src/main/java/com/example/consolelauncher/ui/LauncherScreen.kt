@@ -50,9 +50,9 @@ import com.example.consolelauncher.ui.components.StatusBar
 import com.example.consolelauncher.ui.theme.ConsoleTextSecondary
 
 /**
- * The launcher home screen. It shows the applications installed on the device as console style
- * tiles, plus the games that RetroArch knows about, and can be driven with a touch screen, a D-pad
- * or the arrow keys.
+ * The launcher home screen. It shows recently launched apps and the RetroArch play history as
+ * console style tiles, plus all games that RetroArch knows about, and can be driven with a touch
+ * screen, a D-pad or the arrow keys.
  */
 @Composable
 fun LauncherRoot(
@@ -70,6 +70,7 @@ fun LauncherRoot(
     var selectedTab by remember { mutableStateOf(LauncherTab.HOME) }
 
     var retroGames by remember { mutableStateOf<List<RetroGameEntry>>(emptyList()) }
+    var historyGames by remember { mutableStateOf<List<RetroGameEntry>>(emptyList()) }
     var retroArchAvailable by remember { mutableStateOf(false) }
     var retroHasPlaylistAccess by remember { mutableStateOf(false) }
     var retroHasArtworkAccess by remember { mutableStateOf(false) }
@@ -102,9 +103,11 @@ fun LauncherRoot(
         if (retroArchAvailable && retroHasPlaylistAccess) {
             retroLoading = true
             retroGames = retroRepository.loadRetroGames()
+            historyGames = retroRepository.loadHistory()
             retroLoading = false
         } else {
             retroGames = emptyList()
+            historyGames = emptyList()
         }
         retroLoaded = true
     }
@@ -146,6 +149,15 @@ fun LauncherRoot(
                 playlistAccess.requestAccess(playlistPicker, startInParent = true)
             }
         }
+    }
+
+    // Shown in place of the home history while it cannot be loaded, null once there is real
+    // content to display.
+    val historyMessage = when {
+        !retroLoaded -> "Reading RetroArch history..."
+        !retroArchAvailable -> "RetroArch is not installed - your last played games will show up here"
+        !retroHasPlaylistAccess -> "Grant playlist access in the GAMES tab to see your history here"
+        else -> null
     }
 
     Box(
@@ -193,8 +205,11 @@ fun LauncherRoot(
             Box(modifier = Modifier.weight(1f)) {
                 when (selectedTab) {
                     LauncherTab.HOME -> LauncherGrid(
-                        rows = homeRows(recents, apps),
+                        rows = homeRows(recents, historyGames, historyMessage),
                         onLaunchApp = ::launch,
+                        onLaunchGame = ::launchGame,
+                        onLoadThumbnail = { path -> retroRepository.loadThumbnail(path) },
+                        onLoadBoxArt = { name -> retroRepository.loadBoxArt(name) },
                         autoFocusFirstItem = true,
                     )
 
@@ -266,20 +281,22 @@ private fun Hint(key: String, action: String) {
     }
 }
 
-private fun homeRows(recents: List<AppEntry>, apps: List<AppEntry>): List<LauncherRow> = buildList {
+private fun homeRows(
+    recents: List<AppEntry>,
+    historyGames: List<RetroGameEntry>,
+    historyMessage: String?,
+): List<LauncherRow> = buildList {
     add(LauncherRow.Section("CONTINUE"))
     if (recents.isEmpty()) {
         add(LauncherRow.Message("Nothing here yet - launch an app to build your history"))
     } else {
         recents.take(4).forEach { add(LauncherRow.App("continue_${it.packageName}", it)) }
     }
-    add(LauncherRow.Section("ALL APPS"))
-    val alreadyShown = recents.map { it.packageName }.toSet()
-    val remaining = apps.filterNot { it.packageName in alreadyShown }
-    if (remaining.isEmpty()) {
-        add(LauncherRow.Message("Loading installed applications..."))
+    add(LauncherRow.Section("HISTORY"))
+    if (historyGames.isEmpty()) {
+        add(LauncherRow.Message(historyMessage ?: "No games played yet - start one from the GAMES tab"))
     } else {
-        remaining.take(8).forEach { add(LauncherRow.App("all_${it.packageName}", it)) }
+        add(LauncherRow.GameRow("home_history", historyGames))
     }
 }
 

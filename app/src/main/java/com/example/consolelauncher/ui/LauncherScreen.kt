@@ -198,22 +198,6 @@ fun LauncherRoot(
                         autoFocusFirstItem = true,
                     )
 
-<<<<<<< HEAD
-                    LauncherTab.GAMES -> LauncherGrid(
-                        rows = gameRows(
-                            loaded = retroLoaded,
-                            available = retroArchAvailable,
-                            hasPlaylistAccess = retroHasPlaylistAccess,
-                            hasArtworkAccess = retroHasArtworkAccess,
-                            loading = retroLoading,
-                            games = retroGames,
-                            error = retroError,
-                        ),
-                        onLaunchApp = ::launch,
-                        onLaunchGame = ::launchGame,
-                        onAction = ::handleGameAction,
-                        onLoadThumbnail = { paths -> retroRepository.loadThumbnail(paths) },
-=======
                     LauncherTab.GAMES -> LauncherGameSystems(
                         games = retroGames,
                         error = retroError,
@@ -225,7 +209,6 @@ fun LauncherRoot(
                         onLoadThumbnail = { path -> retroRepository.loadThumbnail(path) },
                         onLoadBoxArt = { name -> retroRepository.loadBoxArt(name) },
                         onAction = ::handleGameAction,
->>>>>>> 9e1d047 (fixed card icon bugs)
                         autoFocusFirstItem = true,
                     )
 
@@ -323,98 +306,6 @@ private fun allAppsRows(apps: List<AppEntry>): List<LauncherRow> = buildList {
         }
 }
 
-<<<<<<< HEAD
-/**
- * The GAMES tab: either the games from RetroArch's playlists, or an explanation of what is
- * missing, with a focusable action to fix it.
- */
-private fun gameRows(
-    loaded: Boolean,
-    available: Boolean,
-    hasPlaylistAccess: Boolean,
-    hasArtworkAccess: Boolean,
-    loading: Boolean,
-    games: List<RetroGameEntry>,
-    error: String?,
-): List<LauncherRow> = buildList {
-    add(LauncherRow.Section("GAMES"))
-
-    when {
-        !loaded || (loading && games.isEmpty()) -> {
-            add(LauncherRow.Message("Reading RetroArch playlists..."))
-        }
-
-        !available -> {
-            add(
-                LauncherRow.Message(
-                    "RetroArch is not installed. Install RetroArch to play your ROM collection from here.",
-                ),
-            )
-        }
-
-        !hasPlaylistAccess -> {
-            add(
-                LauncherRow.Message(
-                    "Grant access to the folder where RetroArch keeps its playlists to list your games here.",
-                ),
-            )
-            add(
-                LauncherRow.Action(
-                    key = ACTION_GRANT_PLAYLISTS,
-                    label = "GRANT PLAYLIST ACCESS",
-                    description = "Pick the RetroArch folder that contains the playlists folder",
-                ),
-            )
-        }
-
-        games.isEmpty() -> {
-            add(LauncherRow.Message(error ?: "No games found in the selected folder."))
-            add(
-                LauncherRow.Action(
-                    key = ACTION_GRANT_PLAYLISTS,
-                    label = "CHOOSE ANOTHER FOLDER",
-                    description = "Pick the folder that contains your RetroArch .lpl playlists",
-                ),
-            )
-            add(
-                LauncherRow.Action(
-                    key = ACTION_REFRESH_GAMES,
-                    label = "REFRESH",
-                    description = "Scan the selected folder again",
-                ),
-            )
-        }
-
-        else -> {
-            if (error != null) add(LauncherRow.Message(error))
-            if (!hasArtworkAccess) {
-                add(
-                    LauncherRow.Action(
-                        key = ACTION_SHOW_ARTWORK,
-                        label = "SHOW GAME ARTWORK",
-                        description = "Grant access to the RetroArch folder that contains the thumbnails for box art",
-                    ),
-                )
-            }
-            games.groupBy { it.playlistName }
-                .toSortedMap(String.CASE_INSENSITIVE_ORDER)
-                .forEach { (playlist, entries) ->
-                    add(LauncherRow.Section(playlist.uppercase(), key = "playlist_$playlist"))
-                    entries.forEach { add(LauncherRow.Game(it.gridKey, it)) }
-                }
-            add(
-                LauncherRow.Action(
-                    key = ACTION_CHANGE_PLAYLISTS,
-                    label = "CHANGE PLAYLIST FOLDER",
-                    description = "Scan a different RetroArch playlists folder",
-                ),
-            )
-        }
-    }
-}
-
-=======
->>>>>>> 9e1d047 (fixed card icon bugs)
 private fun recentsFrom(store: RecentAppsStore, apps: List<AppEntry>): List<AppEntry> {
     val byPackage = apps.associateBy { it.packageName }
     return store.recentPackages().mapNotNull { byPackage[it] }
@@ -430,11 +321,4 @@ private fun LauncherTab.previous(): LauncherTab {
     return values[(ordinal - 1 + values.size) % values.size]
 }
 
-<<<<<<< HEAD
-private const val ACTION_GRANT_PLAYLISTS = "games_grant_playlists"
-private const val ACTION_CHANGE_PLAYLISTS = "games_change_playlists"
-private const val ACTION_REFRESH_GAMES = "games_refresh"
 private const val ACTION_SHOW_ARTWORK = "games_show_artwork"
-=======
-
->>>>>>> 9e1d047 (fixed card icon bugs)

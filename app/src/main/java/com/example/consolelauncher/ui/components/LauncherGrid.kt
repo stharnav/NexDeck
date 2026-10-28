@@ -89,7 +89,6 @@ fun LauncherGrid(
     onLaunchApp: (AppEntry) -> Unit,
     onLaunchGame: (RetroGameEntry) -> Unit = {},
     onAction: (LauncherRow.Action) -> Unit = {},
-    onLoadThumbnail: suspend (List<String>) -> ImageBitmap? = { null },
     autoFocusFirstItem: Boolean = false,
     modifier: Modifier = Modifier,
 ) {
@@ -154,7 +153,6 @@ fun LauncherGrid(
                 is LauncherRow.Game -> RetroGameCard(
                     entry = row.entry,
                     onClick = { onLaunchGame(row.entry) },
-                    thumbnailLoader = onLoadThumbnail,
                     modifier = Modifier
                         .fillMaxWidth()
                         .height(GAME_CARD_HEIGHT)
@@ -472,7 +470,6 @@ private val GAME_CARD_HEIGHT = 138.dp
 private val ACTION_CORNER = 12.dp
 
 private val GAME_CARD_WIDTH = 220.dp
-private val GAME_CARD_HEIGHT = CARD_HEIGHT
 
 /** Room at the row ends so the focused card's scale and glow are not clipped by the LazyRow. */
 private val GAME_ROW_BLEED = 16.dp

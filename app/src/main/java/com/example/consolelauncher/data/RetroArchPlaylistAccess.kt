@@ -238,7 +238,6 @@ class RetroArchPlaylistAccess(context: Context) {
     }
 
     /**
-<<<<<<< HEAD
      * Absolute path of the RetroArch `thumbnails` folder that belongs to the granted playlists
      * folder, if it can be derived.
      *
@@ -253,7 +252,10 @@ class RetroArchPlaylistAccess(context: Context) {
             absolute.endsWith("/playlists", ignoreCase = true) ->
                 absolute.substringBeforeLast('/') + "/thumbnails"
             else -> "$absolute/thumbnails"
-=======
+        }
+    }
+
+    /**
      * Lists the cover art of a system's `thumbnails/<system>/Named_Boxarts` folder, mapped from
      * the file base name (case/spacing-insensitive) to its document URI. Returns an empty map
      * when the granted tree does not contain the folder, e.g. when only `playlists` was picked.
@@ -353,12 +355,10 @@ class RetroArchPlaylistAccess(context: Context) {
         } catch (e: Exception) {
             Log.w(TAG, "Failed to list children of $parentDocumentId", e)
             null
->>>>>>> 9e1d047 (fixed card icon bugs)
         }
     }
 
     /**
-<<<<<<< HEAD
      * Checks if the granted tree also gives access to the artwork. The user may have granted only
      * the `playlists` folder, in which case the thumbnails next to it cannot be read.
      */
@@ -383,8 +383,6 @@ class RetroArchPlaylistAccess(context: Context) {
     }
 
     /**
-=======
->>>>>>> 9e1d047 (fixed card icon bugs)
      * Opens a file below the granted tree by its absolute path.
      *
      * RetroArch stores the absolute path of box art in its playlists, while the granted tree is a

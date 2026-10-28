@@ -42,12 +42,6 @@ class RetroArchRepository(context: Context) {
         private const val CORE_SUFFIX = "_libretro.so"
         private const val DETECT = "DETECT"
 
-        /** Sub folders RetroArch uses for the artwork of a playlist, in order of preference. */
-        private val THUMBNAIL_SUBDIRS = listOf("Named_Boxarts", "Named_Snaps", "Named_Titles")
-
-        /** Characters RetroArch scrubs from a label before using it as a file name. */
-        private val THUMBNAIL_UNSAFE_CHARS = "&*/:`\"<>?\\|".toCharArray()
-
         private val RETROARCH_VARIANTS = listOf(
             "com.retroarch",
             "com.retroarch.aarch64",
@@ -198,12 +192,8 @@ class RetroArchRepository(context: Context) {
                             ?: "Auto-detect",
                         playlistName = playlistName,
                         romPath = romPath,
-<<<<<<< HEAD
-                        thumbnailPaths = buildThumbnailCandidates(playlistName, label, storedThumbnail),
-=======
-                        thumbnailPath = thumbnail,
+                        thumbnailPath = storedThumbnail,
                         boxArtUri = boxArtUri?.toString(),
->>>>>>> 9e1d047 (fixed card icon bugs)
                         launchPackage = launchPackage,
                         launchIntent = launchIntent,
                     ),
@@ -228,56 +218,6 @@ class RetroArchRepository(context: Context) {
             romPath
         }
         return raw.substringAfterLast('/').substringBeforeLast('.')
-    }
-
-    /**
-     * Builds the places where RetroArch may keep the artwork of a game.
-     *
-     * Playlists normally do not contain a `thumbnail` entry, so the standard layout is used:
-     * `<RetroArch>/thumbnails/<playlist>/Named_Boxarts/<label>.png`, then snaps and titles. The
-     * short name (the label up to the first bracket) is tried as well, because some thumbnail
-     * packs are named that way.
-     */
-    private fun buildThumbnailCandidates(
-        playlistName: String,
-        label: String,
-        storedThumbnail: String?,
-    ): List<String> = buildList {
-        val thumbnailsDir = playlistAccess.thumbnailsDirectory()
-
-        if (!storedThumbnail.isNullOrEmpty()) {
-            add(
-                when {
-                    storedThumbnail.startsWith("content://") ||
-                        storedThumbnail.startsWith("file://") ||
-                        storedThumbnail.startsWith("/") -> storedThumbnail
-                    thumbnailsDir != null -> "$thumbnailsDir/$storedThumbnail"
-                    else -> storedThumbnail
-                },
-            )
-        }
-
-        if (thumbnailsDir == null) return@buildList
-
-        val names = linkedSetOf(label.toThumbnailFileName())
-        label.substringBefore(" (").takeIf { it.isNotBlank() && it != label }
-            ?.let { names.add(it.toThumbnailFileName()) }
-
-        for (subdir in THUMBNAIL_SUBDIRS) {
-            for (name in names) {
-                add("$thumbnailsDir/$playlistName/$subdir/$name")
-            }
-        }
-    }
-
-    /** File name RetroArch uses for the artwork of [this] label. */
-    private fun String.toThumbnailFileName(): String {
-        val scrubbed = buildString(length) {
-            for (char in this@toThumbnailFileName) {
-                append(if (char in THUMBNAIL_UNSAFE_CHARS) '_' else char)
-            }
-        }
-        return "$scrubbed.png"
     }
 
     /**
@@ -323,25 +263,19 @@ class RetroArchRepository(context: Context) {
     }
 
     /**
-     * Loads artwork for a playlist entry, trying the candidates in order. Failures are remembered
-     * so a game without artwork is only looked up once.
+     * Loads the artwork stored in the playlist for a game (`thumbnail` entry). It is either an
+     * absolute path or a URI. Failures are remembered so a game without artwork is only looked
+     * up once.
      */
-    suspend fun loadThumbnail(paths: List<String>): ImageBitmap? = withContext(Dispatchers.IO) {
-        if (paths.isEmpty()) return@withContext null
-        val cacheKey = paths.joinToString("\n")
-        thumbnailCache[cacheKey]?.let { return@withContext it }
-        if (cacheKey in missingThumbnails) return@withContext null
+    suspend fun loadThumbnail(path: String): ImageBitmap? = withContext(Dispatchers.IO) {
+        thumbnailCache[path]?.let { return@withContext it }
+        if (path in missingThumbnails) return@withContext null
 
-        var bitmap: ImageBitmap? = null
-        for (path in paths) {
-            bitmap = decodeThumbnail(path)
-            if (bitmap != null) break
-        }
-
+        val bitmap = decodeThumbnail(path)
         if (bitmap != null) {
-            thumbnailCache[cacheKey] = bitmap
+            thumbnailCache[path] = bitmap
         } else {
-            missingThumbnails.add(cacheKey)
+            missingThumbnails.add(path)
         }
         bitmap
     }

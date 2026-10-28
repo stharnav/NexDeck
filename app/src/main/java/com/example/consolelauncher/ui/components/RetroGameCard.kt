@@ -14,10 +14,12 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -48,9 +50,12 @@ import com.example.consolelauncher.ui.theme.ConsoleTextPrimary
 import com.example.consolelauncher.ui.theme.ConsoleTextSecondary
 
 /**
- * A console style "game card" tile for a game from a RetroArch playlist. The tile shows the box
- * art from RetroArch, loaded lazily so that a big playlist does not have to decode every
- * thumbnail up front.
+ * A console style "game card" tile for a game from a RetroArch playlist. The tile shows the
+ * artwork from RetroArch, loaded lazily so that a big playlist does not have to decode every
+ * image up front.
+ *
+ * The default horizontal layout shows the artwork beside the game and core names. [vertical]
+ * stacks the artwork above a divider and the game name only, used by the home screen history.
  */
 @Composable
 fun RetroGameCard(
@@ -59,6 +64,7 @@ fun RetroGameCard(
     modifier: Modifier = Modifier,
     thumbnailLoader: suspend (String) -> ImageBitmap? = { null },
     boxArtLoader: suspend (String) -> ImageBitmap? = { null },
+    vertical: Boolean = false,
 ) {
     var focused by remember { mutableStateOf(false) }
     val scale by animateFloatAsState(
@@ -80,34 +86,63 @@ fun RetroGameCard(
     // Prefer cover art from Named_boxarts, fall back to playlist thumbnail, then the placeholder.
     val coverArt = boxArt ?: thumbnail
 
-    Row(
-        modifier = modifier
-            .scale(scale)
-            .shadow(
-                elevation = if (focused) 16.dp else 0.dp,
-                shape = RoundedCornerShape(CARD_CORNER),
-                ambientColor = ConsoleAccent,
-                spotColor = ConsoleAccent,
-            )
-            .clip(RoundedCornerShape(CARD_CORNER))
-            .background(ConsoleSurface)
-            .border(
-                width = if (focused) 2.dp else 1.dp,
-                color = if (focused) ConsoleAccent else ConsoleStroke,
-                shape = RoundedCornerShape(CARD_CORNER),
-            )
-            .onFocusChanged { focused = it.isFocused }
-            .focusable()
-            .onKeyEvent { event ->
-                if (event.nativeKeyEvent.action == android.view.KeyEvent.ACTION_DOWN && event.isSelectKey()) {
-                    onClick()
-                    true
-                } else {
-                    false
-                }
+    val cardModifier = modifier
+        .scale(scale)
+        .shadow(
+            elevation = if (focused) 16.dp else 0.dp,
+            shape = RoundedCornerShape(CARD_CORNER),
+            ambientColor = ConsoleAccent,
+            spotColor = ConsoleAccent,
+        )
+        .clip(RoundedCornerShape(CARD_CORNER))
+        .background(ConsoleSurface)
+        .border(
+            width = if (focused) 2.dp else 1.dp,
+            color = if (focused) ConsoleAccent else ConsoleStroke,
+            shape = RoundedCornerShape(CARD_CORNER),
+        )
+        .onFocusChanged { focused = it.isFocused }
+        .focusable()
+        .onKeyEvent { event ->
+            if (event.nativeKeyEvent.action == android.view.KeyEvent.ACTION_DOWN && event.isSelectKey()) {
+                onClick()
+                true
+            } else {
+                false
             }
-            .clickable(onClick = onClick)
-            .padding(10.dp),
+        }
+        .clickable(onClick = onClick)
+
+    if (vertical) {
+        Column(modifier = cardModifier.padding(10.dp)) {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .weight(1f)
+                    .clip(RoundedCornerShape(10.dp))
+                    .background(Color.White.copy(alpha = 0.04f)),
+                contentAlignment = Alignment.Center,
+            ) {
+                CardArtwork(coverArt)
+            }
+
+            Spacer(Modifier.height(8.dp))
+            HorizontalDivider(thickness = 1.dp, color = ConsoleStroke)
+            Spacer(Modifier.height(8.dp))
+
+            Text(
+                text = entry.label,
+                style = MaterialTheme.typography.titleSmall,
+                color = ConsoleTextPrimary,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+        return
+    }
+
+    Row(
+        modifier = cardModifier.padding(10.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         // The box art keeps the portrait aspect ratio of the artwork RetroArch ships, so the
@@ -120,21 +155,7 @@ fun RetroGameCard(
                 .background(Color.White.copy(alpha = 0.04f)),
             contentAlignment = Alignment.Center,
         ) {
-            val art = coverArt
-            if (art != null) {
-                Image(
-                    bitmap = art,
-                    contentDescription = null,
-                    contentScale = ContentScale.Fit,
-                    modifier = Modifier.fillMaxSize(),
-                )
-            } else {
-                Text(
-                    text = "🎮",
-                    fontSize = 22.sp,
-                    color = Color.White.copy(alpha = 0.25f),
-                )
-            }
+            CardArtwork(coverArt)
         }
 
         Spacer(Modifier.width(12.dp))
@@ -156,6 +177,26 @@ fun RetroGameCard(
                 overflow = TextOverflow.Ellipsis,
             )
         }
+    }
+}
+
+/** The decoded artwork of a card, or a placeholder glyph while it is missing. */
+@Composable
+private fun CardArtwork(coverArt: ImageBitmap?) {
+    val art = coverArt
+    if (art != null) {
+        Image(
+            bitmap = art,
+            contentDescription = null,
+            contentScale = ContentScale.Fit,
+            modifier = Modifier.fillMaxSize(),
+        )
+    } else {
+        Text(
+            text = "🎮",
+            fontSize = 22.sp,
+            color = Color.White.copy(alpha = 0.25f),
+        )
     }
 }
 

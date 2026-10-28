@@ -296,7 +296,7 @@ private fun homeRows(
     if (historyGames.isEmpty()) {
         add(LauncherRow.Message(historyMessage ?: "No games played yet - start one from the GAMES tab"))
     } else {
-        add(LauncherRow.GameRow("home_history", historyGames))
+        add(LauncherRow.GameRow("home_history", historyGames, verticalCards = true))
     }
 }
 

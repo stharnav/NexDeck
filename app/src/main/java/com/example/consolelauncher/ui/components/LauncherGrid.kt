@@ -41,6 +41,7 @@ import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.input.key.onKeyEvent
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.consolelauncher.data.AppEntry
@@ -62,7 +63,12 @@ sealed interface LauncherRow {
     data class App(val key: String, val entry: AppEntry) : LauncherRow
 
     /** A horizontally scrollable row of games, e.g. the RetroArch history on the home screen. */
-    data class GameRow(val key: String, val games: List<RetroGameEntry>) : LauncherRow
+    data class GameRow(
+        val key: String,
+        val games: List<RetroGameEntry>,
+        /** Tiles stack the artwork above a divider and the game name instead of a wide card. */
+        val verticalCards: Boolean = false,
+    ) : LauncherRow
 
     data class Message(val text: String) : LauncherRow
 
@@ -166,6 +172,9 @@ fun LauncherGrid(
                     } else {
                         null
                     },
+                    cardWidth = if (row.verticalCards) HISTORY_CARD_WIDTH else GAME_CARD_WIDTH,
+                    cardHeight = if (row.verticalCards) HISTORY_CARD_HEIGHT else GAME_CARD_HEIGHT,
+                    verticalCards = row.verticalCards,
                 )
             }
         }
@@ -356,6 +365,9 @@ private fun GameSystemRow(
     onLoadBoxArt: suspend (String) -> ImageBitmap?,
     modifier: Modifier = Modifier,
     firstItemRequester: FocusRequester? = null,
+    cardWidth: Dp = GAME_CARD_WIDTH,
+    cardHeight: Dp = GAME_CARD_HEIGHT,
+    verticalCards: Boolean = false,
 ) {
     val firstKey = games.firstOrNull()?.gridKey
 
@@ -374,9 +386,10 @@ private fun GameSystemRow(
                 onClick = { onLaunchGame(entry) },
                 thumbnailLoader = onLoadThumbnail,
                 boxArtLoader = onLoadBoxArt,
+                vertical = verticalCards,
                 modifier = Modifier
-                    .width(GAME_CARD_WIDTH)
-                    .height(GAME_CARD_HEIGHT)
+                    .width(cardWidth)
+                    .height(cardHeight)
                     .thenIf(isFirst) { focusRequester(firstItemRequester!!) },
             )
         }
@@ -479,6 +492,10 @@ private val GAME_CARD_HEIGHT = 138.dp
 private val ACTION_CORNER = 12.dp
 
 private val GAME_CARD_WIDTH = 220.dp
+
+/** History tiles stack the artwork above a divider and the game name. */
+private val HISTORY_CARD_WIDTH = 170.dp
+private val HISTORY_CARD_HEIGHT = 190.dp
 
 /** Room at the row ends so the focused card's scale and glow are not clipped by the LazyRow. */
 private val GAME_ROW_BLEED = 16.dp

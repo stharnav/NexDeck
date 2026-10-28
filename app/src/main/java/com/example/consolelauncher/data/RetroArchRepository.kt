@@ -52,8 +52,17 @@ class RetroArchRepository(context: Context) {
         /** Playlist name of RetroArch's built-in content history playlist. */
         private const val HISTORY_PLAYLIST = "content_history"
 
-        /** Folder names under which RetroArch keeps the history cover art. */
-        private val HISTORY_BOXART_FOLDERS = listOf(HISTORY_PLAYLIST, "history")
+        /** System folder names of the history playlist itself, usually absent from thumbnails. */
+        private val HISTORY_SYSTEM_FOLDERS = listOf(HISTORY_PLAYLIST, "history")
+
+        /**
+         * Artwork a history entry shows, best first: the title screen of its system, falling back
+         * to its box art.
+         */
+        private val HISTORY_ARTWORK_FOLDERS = listOf(
+            RetroArchPlaylistAccess.TITLES_DIR,
+            RetroArchPlaylistAccess.BOXARTS_DIR,
+        )
 
         /** Games shown in the home screen history section. */
         private const val HISTORY_LIMIT = 10
@@ -135,8 +144,10 @@ class RetroArchRepository(context: Context) {
 
     /**
      * Loads RetroArch's content history (`content_history.lpl`): the last played games in the
-     * order RetroArch recorded them, limited to [HISTORY_LIMIT] entries. Returns an empty list
-     * if RetroArch is not installed, no playlist access was granted or nothing was played yet.
+     * order RetroArch recorded them, limited to [HISTORY_LIMIT] entries. Entries are shown with
+     * the title screen artwork of their system when available, falling back to the box art.
+     * Returns an empty list if RetroArch is not installed, no playlist access was granted or
+     * nothing was played yet.
      */
     suspend fun loadHistory(): List<RetroGameEntry> = withContext(Dispatchers.IO) {
         if (resolvePackage() == null) {
@@ -154,7 +165,12 @@ class RetroArchRepository(context: Context) {
             return@withContext emptyList()
         }
 
-        val history = parsePlaylistFile(historyUri, HISTORY_PLAYLIST, HISTORY_BOXART_FOLDERS)
+        val history = parsePlaylistFile(
+            playlistUri = historyUri,
+            playlistName = HISTORY_PLAYLIST,
+            systemFolders = HISTORY_SYSTEM_FOLDERS,
+            artworkFolders = HISTORY_ARTWORK_FOLDERS,
+        )
         Log.d(TAG, "Loaded ${history.size} history entries")
         history.take(HISTORY_LIMIT)
     }
@@ -180,18 +196,21 @@ class RetroArchRepository(context: Context) {
     private suspend fun parsePlaylistFile(
         playlistUri: Uri,
         playlistName: String,
-        boxArtFolders: List<String> = listOf(playlistName),
+        systemFolders: List<String> = listOf(playlistName),
+        artworkFolders: List<String> = listOf(RetroArchPlaylistAccess.BOXARTS_DIR),
     ): List<RetroGameEntry> {
         val jsonText = playlistAccess.readPlaylistFile(playlistUri) ?: return emptyList()
-        // Cover art of this system, keyed by file base name without extension.
-        val boxArtByBaseName = playlistAccess.listBoxArt(boxArtFolders)
         return try {
             val json = JSONObject(jsonText)
             val defaultCorePath = json.optString("default_core_path", "").trim()
             val defaultCoreName = json.optString("default_core_name", "").trim()
             val items = json.optJSONArray("items") ?: return emptyList()
-            val games = mutableListOf<RetroGameEntry>()
 
+            // Collect the raw entries first: cross-system playlists (history, favourites) have no
+            // thumbnail folder of their own. Every entry names the system database it belongs to
+            // (`db_name`), which is the folder its cover art lives in, so all systems have to be
+            // known before the art can be scanned.
+            val rawItems = mutableListOf<PlaylistItem>()
             for (index in 0 until items.length()) {
                 val item = items.optJSONObject(index) ?: continue
                 val romPath = item.optString("path", "").trim().takeIf { it.isNotEmpty() } ?: continue
@@ -204,34 +223,48 @@ class RetroArchRepository(context: Context) {
                     ?: defaultCorePath.takeIf { it.isNotBlank() && it != DETECT }
                 val effectiveCoreName = coreName.takeIf { it.isNotBlank() && it != DETECT }
                     ?: defaultCoreName.takeIf { it.isNotBlank() && it != DETECT }
-                val resolvedCorePath = effectiveCorePath
-
-                // Games from a playlist of one RetroArch variant may run on another (Aarch64 vs the
-                // Play Store build), so ask the core path which package the game belongs to.
-                val launchPackage = (resolvedCorePath?.let(::packageFromCorePath)
-                    ?: resolvePackage()) ?: return emptyList()
-
-                val launchIntent = buildLaunchIntent(romPath, resolvedCorePath, launchPackage) ?: continue
                 val label = item.optString("label", "").trim()
                     .ifEmpty { romPath.substringAfterLast('/').substringBeforeLast('.') }
-                val storedThumbnail = item.optString("thumbnail", "").trim().takeIf { it.isNotEmpty() }
+                val dbName = item.optString("db_name", "").trim()
+                    .removeSuffix(".lpl")
+                    .takeIf { it.isNotBlank() }
+                val thumbnailPath = item.optString("thumbnail", "").trim().takeIf { it.isNotEmpty() }
 
-                // Cover art lives in thumbnails/<system>/Named_Boxarts, named after the ROM or
-                // the playlist label. Look it up in the scanned map instead of guessing paths.
-                val boxArtUri = boxArtByBaseName[romBaseName(romPath).normalizedKey()]
-                    ?: boxArtByBaseName[label.normalizedKey()]
+                rawItems.add(
+                    PlaylistItem(romPath, label, effectiveCorePath, effectiveCoreName, thumbnailPath, dbName),
+                )
+            }
+
+            // Cover art lives in thumbnails/<system>/<artwork folder>, named after the ROM or the
+            // playlist label. Scan every involved system folder once per artwork folder; an entry
+            // prefers the folder of its own system over the playlist's folders, and the artwork
+            // folders are tried best first.
+            val systems = rawItems.mapNotNull { it.dbName }.distinct()
+            val artBySystem = artworkFolders.associateWith { artworkFolder ->
+                playlistAccess.listArtworkPerSystem(systemFolders + systems, artworkFolder)
+            }
+            val games = mutableListOf<RetroGameEntry>()
+
+            for (raw in rawItems) {
+                // Games from a playlist of one RetroArch variant may run on another (Aarch64 vs the
+                // Play Store build), so ask the core path which package the game belongs to.
+                val launchPackage = (raw.corePath?.let(::packageFromCorePath)
+                    ?: resolvePackage()) ?: return emptyList()
+
+                val launchIntent = buildLaunchIntent(raw.romPath, raw.corePath, launchPackage) ?: continue
+                val boxArtUri = boxArtFor(artBySystem, raw, systemFolders, artworkFolders)
 
                 games.add(
                     RetroGameEntry(
-                        id = "$playlistName#${romPath.hashCode()}",
-                        label = label,
-                        coreName = effectiveCoreName
-                            ?: resolvedCorePath?.substringAfterLast('/')
+                        id = "$playlistName#${raw.romPath.hashCode()}",
+                        label = raw.label,
+                        coreName = raw.coreName
+                            ?: raw.corePath?.substringAfterLast('/')
                             ?.trimCoreSuffix()
                             ?: "Auto-detect",
                         playlistName = playlistName,
-                        romPath = romPath,
-                        thumbnailPath = storedThumbnail,
+                        romPath = raw.romPath,
+                        thumbnailPath = raw.thumbnailPath,
                         boxArtUri = boxArtUri?.toString(),
                         launchPackage = launchPackage,
                         launchIntent = launchIntent,
@@ -243,6 +276,44 @@ class RetroArchRepository(context: Context) {
         } catch (e: Exception) {
             Log.w(TAG, "Failed to parse playlist: $playlistName", e)
             emptyList()
+        }
+    }
+
+    /** A playlist entry before the launch intent and its cover art are resolved. */
+    private data class PlaylistItem(
+        val romPath: String,
+        val label: String,
+        val corePath: String?,
+        val coreName: String?,
+        val thumbnailPath: String?,
+        /** System database the entry belongs to (`thumbnails/<db_name>` holds its cover art). */
+        val dbName: String?,
+    )
+
+    /**
+     * Resolves the cover art of one playlist entry. The entry's own system (`db_name`) is
+     * preferred, so a cross-system playlist such as the history picks the art of the system the
+     * game runs on; the playlist's own folders are the fallback. Within a system, the artwork
+     * folders of [artworkFolders] are tried best first. Art files are named after the ROM or the
+     * playlist label.
+     */
+    private fun boxArtFor(
+        artBySystem: Map<String, Map<String, Map<String, Uri>>>,
+        item: PlaylistItem,
+        fallbackFolders: List<String>,
+        artworkFolders: List<String>,
+    ): Uri? {
+        val keys = setOf(romBaseName(item.romPath).normalizedKey(), item.label.normalizedKey())
+        val folders = buildList {
+            item.dbName?.let { add(it.normalizedKey()) }
+            fallbackFolders.forEach { add(it.normalizedKey()) }
+        }.distinct()
+        return artworkFolders.firstNotNullOfOrNull { artworkFolder ->
+            artBySystem[artworkFolder]?.let { artByFolder ->
+                folders.firstNotNullOfOrNull { folder ->
+                    artByFolder[folder]?.let { art -> keys.firstNotNullOfOrNull(art::get) }
+                }
+            }
         }
     }
 
@@ -320,8 +391,8 @@ class RetroArchRepository(context: Context) {
     }
 
     /**
-     * Loads box art by its SAF document URI (from [RetroArchPlaylistAccess.listBoxArt]). Failures
-     * are remembered so a missing cover is only looked up once.
+     * Loads box art by its SAF document URI (from [RetroArchPlaylistAccess.listArtworkPerSystem]).
+     * Failures are remembered so a missing cover is only looked up once.
      */
     suspend fun loadBoxArt(uriString: String): ImageBitmap? = withContext(Dispatchers.IO) {
         boxArtCache[uriString]?.let { return@withContext it }

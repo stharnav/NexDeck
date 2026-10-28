@@ -44,8 +44,9 @@ class RetroArchPlaylistAccess(context: Context) {
         private const val PRIMARY_STORAGE = "/storage/emulated/0/"
         private const val LEGACY_PRIMARY_STORAGE = "/sdcard/"
 
-        /** RetroArch folder that holds the cover art of a system. */
-        private const val BOXARTS_DIR = "Named_Boxarts"
+        /** RetroArch folders that hold the cover art / title screen of a system. */
+        internal const val BOXARTS_DIR = "Named_Boxarts"
+        internal const val TITLES_DIR = "Named_Titles"
 
         /** The built-in playlist that records the last played games, newest first. */
         private const val HISTORY_PLAYLIST_FILE = "content_history.lpl"
@@ -286,13 +287,16 @@ class RetroArchPlaylistAccess(context: Context) {
     }
 
     /**
-     * Lists the cover art of the `thumbnails/<system>/Named_Boxarts` folders of [systemFolders],
-     * mapped from the file base name (case/spacing-insensitive) to its document URI. The folders
-     * are tried in order, so callers can pass alternative spellings of a system name. Returns an
-     * empty map when the granted tree does not contain the folder, e.g. when only `playlists` was
-     * picked.
+     * Lists the cover art of the `thumbnails/<system>/<artworkFolder>` folders of [systemFolders].
+     * Every folder gets its own map from file base name (case/spacing-insensitive) to its document
+     * URI, keyed by the folder's [normalizedKey], so a caller can pick the folder of a single
+     * entry's system without mixing up games that share a name across systems. Folders that do not
+     * exist below the granted tree (e.g. only `playlists` was picked) are simply absent.
      */
-    suspend fun listBoxArt(systemFolders: List<String>): Map<String, Uri> = withContext(Dispatchers.IO) {
+    suspend fun listArtworkPerSystem(
+        systemFolders: List<String>,
+        artworkFolder: String = BOXARTS_DIR,
+    ): Map<String, Map<String, Uri>> = withContext(Dispatchers.IO) {
         val treeUri = getPlaylistsUri() ?: return@withContext emptyMap()
         val rootDocumentId = runCatching { DocumentsContract.getTreeDocumentId(treeUri) }.getOrNull()
             ?: return@withContext emptyMap()
@@ -303,8 +307,11 @@ class RetroArchPlaylistAccess(context: Context) {
             return@withContext emptyMap()
         }
 
-        val artByBaseName = mutableMapOf<String, Uri>()
+        val artBySystem = mutableMapOf<String, Map<String, Uri>>()
         for (systemFolder in systemFolders) {
+            val systemKey = systemFolder.normalizedKey()
+            if (systemKey.isEmpty() || systemKey in artBySystem) continue
+
             val systemId = childDirectoryId(treeUri, thumbnailsId, systemFolder)
                 ?: childDirectoryIdNormalized(treeUri, thumbnailsId, systemFolder)
             if (systemId == null) {
@@ -312,24 +319,24 @@ class RetroArchPlaylistAccess(context: Context) {
                 continue
             }
 
-            val boxArtsId = childDirectoryId(treeUri, systemId, BOXARTS_DIR)
-            if (boxArtsId == null) {
-                Log.d(TAG, "No $BOXARTS_DIR folder below the '$systemFolder' thumbnails")
+            val artId = childDirectoryId(treeUri, systemId, artworkFolder)
+            if (artId == null) {
+                Log.d(TAG, "No $artworkFolder folder below the '$systemFolder' thumbnails")
                 continue
             }
 
-            listDocuments(treeUri, boxArtsId) { id, displayName, isDirectory ->
+            val artByBaseName = mutableMapOf<String, Uri>()
+            listDocuments(treeUri, artId) { id, displayName, isDirectory ->
                 if (!isDirectory) {
-                    val key = displayName.substringBeforeLast('.').normalizedKey()
-                    if (!artByBaseName.containsKey(key)) {
-                        artByBaseName[key] = DocumentsContract.buildDocumentUriUsingTree(treeUri, id)
-                    }
+                    artByBaseName[displayName.substringBeforeLast('.').normalizedKey()] =
+                        DocumentsContract.buildDocumentUriUsingTree(treeUri, id)
                 }
                 null
             }
+            artBySystem[systemKey] = artByBaseName
+            Log.d(TAG, "Found ${artByBaseName.size} $artworkFolder files for '$systemFolder'")
         }
-        Log.d(TAG, "Found ${artByBaseName.size} box art files for $systemFolders")
-        artByBaseName
+        artBySystem
     }
 
     /** Document id of the child directory named [name] (case-insensitive), or null. */

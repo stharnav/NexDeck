@@ -39,6 +39,10 @@ import com.example.consolelauncher.data.AppRepository
 import com.example.consolelauncher.data.RecentAppsStore
 import com.example.consolelauncher.data.RetroArchRepository
 import com.example.consolelauncher.data.RetroGameEntry
+import com.example.consolelauncher.ui.components.LauncherGameSystems
+import com.example.consolelauncher.ui.components.ACTION_CHANGE_PLAYLISTS
+import com.example.consolelauncher.ui.components.ACTION_GRANT_PLAYLISTS
+import com.example.consolelauncher.ui.components.ACTION_REFRESH_GAMES
 import com.example.consolelauncher.ui.components.LauncherGrid
 import com.example.consolelauncher.ui.components.LauncherRow
 import com.example.consolelauncher.ui.components.LauncherTab
@@ -194,6 +198,7 @@ fun LauncherRoot(
                         autoFocusFirstItem = true,
                     )
 
+<<<<<<< HEAD
                     LauncherTab.GAMES -> LauncherGrid(
                         rows = gameRows(
                             loaded = retroLoaded,
@@ -208,6 +213,19 @@ fun LauncherRoot(
                         onLaunchGame = ::launchGame,
                         onAction = ::handleGameAction,
                         onLoadThumbnail = { paths -> retroRepository.loadThumbnail(paths) },
+=======
+                    LauncherTab.GAMES -> LauncherGameSystems(
+                        games = retroGames,
+                        error = retroError,
+                        loaded = retroLoaded,
+                        available = retroArchAvailable,
+                        hasPlaylistAccess = retroHasPlaylistAccess,
+                        loading = retroLoading,
+                        onLaunchGame = ::launchGame,
+                        onLoadThumbnail = { path -> retroRepository.loadThumbnail(path) },
+                        onLoadBoxArt = { name -> retroRepository.loadBoxArt(name) },
+                        onAction = ::handleGameAction,
+>>>>>>> 9e1d047 (fixed card icon bugs)
                         autoFocusFirstItem = true,
                     )
 
@@ -305,6 +323,7 @@ private fun allAppsRows(apps: List<AppEntry>): List<LauncherRow> = buildList {
         }
 }
 
+<<<<<<< HEAD
 /**
  * The GAMES tab: either the games from RetroArch's playlists, or an explanation of what is
  * missing, with a focusable action to fix it.
@@ -394,6 +413,8 @@ private fun gameRows(
     }
 }
 
+=======
+>>>>>>> 9e1d047 (fixed card icon bugs)
 private fun recentsFrom(store: RecentAppsStore, apps: List<AppEntry>): List<AppEntry> {
     val byPackage = apps.associateBy { it.packageName }
     return store.recentPackages().mapNotNull { byPackage[it] }
@@ -409,7 +430,11 @@ private fun LauncherTab.previous(): LauncherTab {
     return values[(ordinal - 1 + values.size) % values.size]
 }
 
+<<<<<<< HEAD
 private const val ACTION_GRANT_PLAYLISTS = "games_grant_playlists"
 private const val ACTION_CHANGE_PLAYLISTS = "games_change_playlists"
 private const val ACTION_REFRESH_GAMES = "games_refresh"
 private const val ACTION_SHOW_ARTWORK = "games_show_artwork"
+=======
+
+>>>>>>> 9e1d047 (fixed card icon bugs)

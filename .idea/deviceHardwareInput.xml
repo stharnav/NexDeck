@@ -3,7 +3,11 @@
   <component name="HardwareInputStateStorage">
     <option name="enabledDevices">
       <map>
+<<<<<<< HEAD
         <entry key="$USER_HOME$/.android/avd/Medium_Phone.avd" value="1793006040885" />
+=======
+        <entry key="$USER_HOME$/.android/avd/Medium_Phone.avd" value="1793177040412" />
+>>>>>>> 9e1d047 (fixed card icon bugs)
       </map>
     </option>
   </component>

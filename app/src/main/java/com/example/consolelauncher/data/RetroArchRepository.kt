@@ -25,6 +25,8 @@ class RetroArchRepository(context: Context) {
     private val contentResolver = appContext.contentResolver
     private val thumbnailCache = ConcurrentHashMap<String, ImageBitmap>()
     private val missingThumbnails = ConcurrentHashMap.newKeySet<String>()
+    private val boxArtCache = ConcurrentHashMap<String, ImageBitmap>()
+    private val missingBoxArt = ConcurrentHashMap.newKeySet<String>()
     private val playlistAccess = RetroArchPlaylistAccess(appContext)
 
     @Volatile
@@ -148,6 +150,8 @@ class RetroArchRepository(context: Context) {
     /** Parses a single `.lpl` playlist file (JSON format). */
     private suspend fun parsePlaylistFile(playlistUri: Uri, playlistName: String): List<RetroGameEntry> {
         val jsonText = playlistAccess.readPlaylistFile(playlistUri) ?: return emptyList()
+        // Cover art of this system, keyed by file base name without extension.
+        val boxArtByBaseName = playlistAccess.listBoxArt(playlistName)
         return try {
             val json = JSONObject(jsonText)
             val defaultCorePath = json.optString("default_core_path", "").trim()
@@ -179,6 +183,11 @@ class RetroArchRepository(context: Context) {
                     .ifEmpty { romPath.substringAfterLast('/').substringBeforeLast('.') }
                 val storedThumbnail = item.optString("thumbnail", "").trim().takeIf { it.isNotEmpty() }
 
+                // Cover art lives in thumbnails/<system>/Named_Boxarts, named after the ROM or
+                // the playlist label. Look it up in the scanned map instead of guessing paths.
+                val boxArtUri = boxArtByBaseName[romBaseName(romPath).normalizedKey()]
+                    ?: boxArtByBaseName[label.normalizedKey()]
+
                 games.add(
                     RetroGameEntry(
                         id = "$playlistName#${romPath.hashCode()}",
@@ -189,7 +198,12 @@ class RetroArchRepository(context: Context) {
                             ?: "Auto-detect",
                         playlistName = playlistName,
                         romPath = romPath,
+<<<<<<< HEAD
                         thumbnailPaths = buildThumbnailCandidates(playlistName, label, storedThumbnail),
+=======
+                        thumbnailPath = thumbnail,
+                        boxArtUri = boxArtUri?.toString(),
+>>>>>>> 9e1d047 (fixed card icon bugs)
                         launchPackage = launchPackage,
                         launchIntent = launchIntent,
                     ),
@@ -205,6 +219,16 @@ class RetroArchRepository(context: Context) {
 
     private fun String.trimCoreSuffix(): String =
         removeSuffix(CORE_SUFFIX_ANDROID).removeSuffix(CORE_SUFFIX).removeSuffix(".so")
+
+    /** Base name of a ROM path (`game.gba`, `content://.../game%20I.zip` -> `game`, `game I`). */
+    private fun romBaseName(romPath: String): String {
+        val raw = if (romPath.startsWith("content://")) {
+            Uri.parse(romPath).lastPathSegment?.let { Uri.decode(it) } ?: romPath
+        } else {
+            romPath
+        }
+        return raw.substringAfterLast('/').substringBeforeLast('.')
+    }
 
     /**
      * Builds the places where RetroArch may keep the artwork of a game.
@@ -320,6 +344,34 @@ class RetroArchRepository(context: Context) {
             missingThumbnails.add(cacheKey)
         }
         bitmap
+    }
+
+    /**
+     * Loads box art by its SAF document URI (from [RetroArchPlaylistAccess.listBoxArt]). Failures
+     * are remembered so a missing cover is only looked up once.
+     */
+    suspend fun loadBoxArt(uriString: String): ImageBitmap? = withContext(Dispatchers.IO) {
+        boxArtCache[uriString]?.let { return@withContext it }
+        if (uriString in missingBoxArt) return@withContext null
+
+        val bitmap = decodeBoxArt(uriString)
+        if (bitmap != null) {
+            boxArtCache[uriString] = bitmap
+        } else {
+            missingBoxArt.add(uriString)
+        }
+        bitmap
+    }
+
+    private fun decodeBoxArt(uriString: String): ImageBitmap? = try {
+        contentResolver.openInputStream(Uri.parse(uriString))?.use { input ->
+            android.graphics.drawable.Drawable.createFromStream(input, null)
+                ?.toBitmap()
+                ?.asImageBitmap()
+        }
+    } catch (e: Exception) {
+        Log.d(TAG, "Failed to load box art: $uriString", e)
+        null
     }
 
     private fun decodeThumbnail(path: String): ImageBitmap? = try {

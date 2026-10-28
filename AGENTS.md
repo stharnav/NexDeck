@@ -27,6 +27,7 @@ MainActivity (entry, HOME intent filter)
       ├─ AppRepository (loads launchable apps via PackageManager on IO dispatcher)
       ├─ RecentAppsStore (SharedPreferences, newline-separated package list, sync commit)
       └─ LauncherGrid (LazyVerticalGrid, 4 columns, focus management)
+      └─ LauncherGameSystems (GAMES tab: one horizontal row per system/playlist)
 ```
 
 ## Launcher-Specific Details

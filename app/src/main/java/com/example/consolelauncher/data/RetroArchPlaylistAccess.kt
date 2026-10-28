@@ -43,6 +43,9 @@ class RetroArchPlaylistAccess(context: Context) {
 
         private const val PRIMARY_STORAGE = "/storage/emulated/0/"
         private const val LEGACY_PRIMARY_STORAGE = "/sdcard/"
+
+        /** RetroArch folder that holds the cover art of a system. */
+        private const val BOXARTS_DIR = "Named_Boxarts"
     }
 
     /**
@@ -235,6 +238,7 @@ class RetroArchPlaylistAccess(context: Context) {
     }
 
     /**
+<<<<<<< HEAD
      * Absolute path of the RetroArch `thumbnails` folder that belongs to the granted playlists
      * folder, if it can be derived.
      *
@@ -249,10 +253,112 @@ class RetroArchPlaylistAccess(context: Context) {
             absolute.endsWith("/playlists", ignoreCase = true) ->
                 absolute.substringBeforeLast('/') + "/thumbnails"
             else -> "$absolute/thumbnails"
+=======
+     * Lists the cover art of a system's `thumbnails/<system>/Named_Boxarts` folder, mapped from
+     * the file base name (case/spacing-insensitive) to its document URI. Returns an empty map
+     * when the granted tree does not contain the folder, e.g. when only `playlists` was picked.
+     */
+    suspend fun listBoxArt(playlistName: String): Map<String, Uri> = withContext(Dispatchers.IO) {
+        val treeUri = getPlaylistsUri() ?: return@withContext emptyMap()
+        val rootDocumentId = runCatching { DocumentsContract.getTreeDocumentId(treeUri) }.getOrNull()
+            ?: return@withContext emptyMap()
+
+        val thumbnailsId = childDirectoryId(treeUri, rootDocumentId, "thumbnails")
+        if (thumbnailsId == null) {
+            Log.d(TAG, "No thumbnails folder below the granted tree root: $rootDocumentId")
+            return@withContext emptyMap()
+        }
+
+        val systemId = childDirectoryId(treeUri, thumbnailsId, playlistName)
+            ?: childDirectoryIdNormalized(treeUri, thumbnailsId, playlistName)
+        if (systemId == null) {
+            Log.d(TAG, "No '$playlistName' folder below the thumbnails folder")
+            return@withContext emptyMap()
+        }
+
+        val boxArtsId = childDirectoryId(treeUri, systemId, BOXARTS_DIR)
+        if (boxArtsId == null) {
+            Log.d(TAG, "No $BOXARTS_DIR folder below the '$playlistName' thumbnails")
+            return@withContext emptyMap()
+        }
+
+        val artByBaseName = mutableMapOf<String, Uri>()
+        listDocuments(treeUri, boxArtsId) { id, displayName, isDirectory ->
+            if (!isDirectory) {
+                artByBaseName[displayName.substringBeforeLast('.').normalizedKey()] =
+                    DocumentsContract.buildDocumentUriUsingTree(treeUri, id)
+            }
+            null
+        }
+        Log.d(TAG, "Found ${artByBaseName.size} box art files for '$playlistName'")
+        artByBaseName
+    }
+
+    /** Document id of the child directory named [name] (case-insensitive), or null. */
+    private fun childDirectoryId(treeUri: Uri, parentDocumentId: String, name: String): String? =
+        listDocuments(treeUri, parentDocumentId) { id, displayName, isDirectory ->
+            if (isDirectory && displayName.equals(name, ignoreCase = true)) id else null
+        }
+
+    /** Like [childDirectoryId], but compares names without spaces, dashes and case. */
+    private fun childDirectoryIdNormalized(
+        treeUri: Uri,
+        parentDocumentId: String,
+        name: String,
+    ): String? {
+        val wanted = name.normalizedKey()
+        if (wanted.isEmpty()) return null
+        return listDocuments(treeUri, parentDocumentId) { id, displayName, isDirectory ->
+            if (isDirectory && displayName.normalizedKey() == wanted) id else null
+        }
+    }
+
+    /** Runs [block] over every child of [parentDocumentId]; returns the first non-null result. */
+    private inline fun <T> listDocuments(
+        treeUri: Uri,
+        parentDocumentId: String,
+        block: (id: String, displayName: String, isDirectory: Boolean) -> T?,
+    ): T? {
+        val childrenUri = try {
+            DocumentsContract.buildChildDocumentsUriUsingTree(treeUri, parentDocumentId)
+        } catch (e: Exception) {
+            Log.w(TAG, "Invalid document id: $parentDocumentId", e)
+            return null
+        }
+        return try {
+            contentResolver.query(
+                childrenUri,
+                arrayOf(
+                    DocumentsContract.Document.COLUMN_DOCUMENT_ID,
+                    DocumentsContract.Document.COLUMN_DISPLAY_NAME,
+                    DocumentsContract.Document.COLUMN_MIME_TYPE,
+                ),
+                null,
+                null,
+                null,
+            )?.use { cursor ->
+                val idIndex = cursor.getColumnIndex(DocumentsContract.Document.COLUMN_DOCUMENT_ID)
+                val nameIndex = cursor.getColumnIndex(DocumentsContract.Document.COLUMN_DISPLAY_NAME)
+                val mimeIndex = cursor.getColumnIndex(DocumentsContract.Document.COLUMN_MIME_TYPE)
+                if (idIndex < 0 || nameIndex < 0) return null
+                while (cursor.moveToNext()) {
+                    val id = cursor.getString(idIndex) ?: continue
+                    val name = cursor.getString(nameIndex) ?: continue
+                    val mime = if (mimeIndex >= 0) cursor.getString(mimeIndex) else null
+                    val isDirectory = mime == DocumentsContract.Document.MIME_TYPE_DIR
+                    block(id, name, isDirectory)?.let { return@use it }
+                }
+                null
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to list children of $parentDocumentId", e)
+            null
+>>>>>>> 9e1d047 (fixed card icon bugs)
         }
     }
 
     /**
+<<<<<<< HEAD
      * Checks if the granted tree also gives access to the artwork. The user may have granted only
      * the `playlists` folder, in which case the thumbnails next to it cannot be read.
      */
@@ -277,6 +383,8 @@ class RetroArchPlaylistAccess(context: Context) {
     }
 
     /**
+=======
+>>>>>>> 9e1d047 (fixed card icon bugs)
      * Opens a file below the granted tree by its absolute path.
      *
      * RetroArch stores the absolute path of box art in its playlists, while the granted tree is a
@@ -309,3 +417,6 @@ class RetroArchPlaylistAccess(context: Context) {
         }
     }.distinct()
 }
+
+/** Comparable form of a document name: lowercase letters and digits only. */
+internal fun String.normalizedKey(): String = lowercase().filter { it.isLetterOrDigit() }

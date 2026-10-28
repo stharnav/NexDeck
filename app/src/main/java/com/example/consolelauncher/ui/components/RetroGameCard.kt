@@ -57,7 +57,12 @@ fun RetroGameCard(
     entry: RetroGameEntry,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
+<<<<<<< HEAD
     thumbnailLoader: suspend (List<String>) -> ImageBitmap? = { null },
+=======
+    thumbnailLoader: suspend (String) -> ImageBitmap? = { null },
+    boxArtLoader: suspend (String) -> ImageBitmap? = { null },
+>>>>>>> 9e1d047 (fixed card icon bugs)
 ) {
     var focused by remember { mutableStateOf(false) }
     val scale by animateFloatAsState(
@@ -66,6 +71,7 @@ fun RetroGameCard(
         label = "retroCardScale",
     )
 
+<<<<<<< HEAD
     val currentLoader = rememberUpdatedState(thumbnailLoader)
     val artwork by produceState<ImageBitmap?>(initialValue = null, entry.thumbnailPaths) {
         value = if (entry.thumbnailPaths.isEmpty()) {
@@ -73,7 +79,20 @@ fun RetroGameCard(
         } else {
             currentLoader.value(entry.thumbnailPaths)
         }
+=======
+    val currentThumbnailLoader = rememberUpdatedState(thumbnailLoader)
+    val thumbnail by produceState<ImageBitmap?>(initialValue = null, entry.thumbnailPath) {
+        value = entry.thumbnailPath?.let { currentThumbnailLoader.value(it) }
+>>>>>>> 9e1d047 (fixed card icon bugs)
     }
+
+    val currentBoxArtLoader = rememberUpdatedState(boxArtLoader)
+    val boxArt by produceState<ImageBitmap?>(initialValue = null, entry.boxArtUri) {
+        value = entry.boxArtUri?.let { currentBoxArtLoader.value(it) }
+    }
+
+    // Prefer cover art from Named_boxarts, fall back to playlist thumbnail, then the placeholder.
+    val coverArt = boxArt ?: thumbnail
 
     Row(
         modifier = modifier
@@ -115,7 +134,11 @@ fun RetroGameCard(
                 .background(Color.White.copy(alpha = 0.04f)),
             contentAlignment = Alignment.Center,
         ) {
+<<<<<<< HEAD
             val art = artwork
+=======
+            val art = coverArt
+>>>>>>> 9e1d047 (fixed card icon bugs)
             if (art != null) {
                 Image(
                     bitmap = art,

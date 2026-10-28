@@ -1,98 +1,71 @@
-# Android Console Launcher — Name Ideas
+# NexDeck
 
-## Project identity
+**Next generation. One interface.**
 
-- **Project type:** Android console-style gaming launcher
-- **Desired brand style:** Futuristic and premium
-- **Core experience:** A polished gaming-console interface with controller-friendly navigation
+NexDeck is a console-style Android launcher designed to give your device a gaming-console-inspired home screen. It aims to make launching apps feel polished, immersive, and convenient—especially with controller or keyboard navigation.
 
-## Top 10 name ideas
+> **Status:** In development
 
-### 1. NexDeck — Recommended
-**Tagline:** Next generation. One interface.
+## Features
 
-Combines “next” with “deck,” evoking a modern gaming device. Short, memorable, and suitable for a controller-friendly Android launcher.
+- Console-inspired home screen
+- Controller- and arrow-key-friendly navigation
+- Android app launching from a unified interface
+- A foundation for a gaming-focused Android experience
 
-**Why it fits**
-- Short and easy to remember
-- Strong gaming-console association
-- Can grow into a broader gaming brand
-- Works well with a dark interface and cyan accents
+*Features listed here describe the project direction; availability may vary as development progresses.*
 
-### 2. VantaCore
-**Tagline:** Power at your command.
+## Brand identity
 
-A dark, sleek, premium-sounding name for a launcher with a cinematic interface and customizable themes.
+- **Name:** NexDeck
+- **Tagline:** Next generation. One interface.
+- **Category:** Android launcher
+- **Suggested palette:** Deep navy, charcoal, white, and electric cyan
 
-### 3. NovaDeck
-**Tagline:** Enter a new dimension.
+## Tech stack
 
-Suggests a new generation of gaming interfaces. Friendly, memorable, and versatile.
+- **Platform:** Android
+- **Language:** Kotlin
+- **IDE:** Android Studio
 
-### 4. Xyron
-**Tagline:** Built for the next level.
+## Getting started
 
-A compact, futuristic name that could work as a standalone gaming technology brand.
+### Requirements
 
-### 5. TitanOS
-**Tagline:** Your world. Your control.
+- Android Studio
+- Android SDK compatible with the project configuration
+- An Android device or emulator
 
-Communicates power and a complete system experience rather than just an app launcher.
+### Run the project
 
-### 6. Nexora
-**Brand personality:** Elegant and futuristic.
+1. Clone or download this repository.
+2. Open the project in Android Studio.
+3. Allow Gradle to sync and install any required SDK components.
+4. Run the `app` configuration on an Android emulator or connected device.
 
-### 7. AetherDeck
-**Brand personality:** Sci-fi and immersive.
+Build configuration and SDK requirements may change during development; refer to the project files for the current settings.
 
-### 8. VortexOS
-**Brand personality:** Fast, energetic, and powerful.
+## Project goals
 
-### 9. Arcadia X
-**Brand personality:** Gaming-inspired and distinctive.
+- Create a clean, immersive console-style launcher.
+- Make navigation comfortable with a game controller, keyboard, or directional keys.
+- Present apps in a clear, visually consistent layout.
+- Build a flexible foundation for future gaming and customization features.
 
-### 10. OmniDeck
-**Brand personality:** An all-in-one entertainment hub.
+## Roadmap
 
-## Best choices by direction
+- [ ] Refine the home-screen layout and app grid
+- [ ] Improve controller and keyboard navigation
+- [ ] Polish focus states, animations, and transitions
+- [ ] Display clear battery and Wi-Fi status indicators
+- [ ] Improve layout consistency across device sizes
+- [ ] Explore game artwork and customization options
+- [ ] Test launcher behavior across supported Android devices
 
-| Name | Best suited for |
-| --- | --- |
-| **NexDeck** | A console-first gaming experience |
-| **TitanOS** | A launcher intended to feel like a complete operating system |
-| **NovaDeck** | A polished, futuristic entertainment interface |
-| **VantaCore** | A dark, premium, cinematic design |
-| **Xyron** | A short, standalone technology brand |
+## Contributing
 
-## Recommended brand: NexDeck
+Contributions, bug reports, and suggestions are welcome. If you plan to make a change, describe the issue or improvement clearly and test it on an emulator or device where possible.
 
-**NEXDECK**  
-*NEXT GENERATION GAMING*
+## Disclaimer
 
-**Tagline:** A new home for your games.
-
-### Suggested visual identity
-
-- **Interface:** Dark, console-inspired UI
-- **Accent color:** Electric cyan
-- **Supporting colors:** Deep navy, charcoal, and white
-- **Typography:** Bold, clean, and modern
-- **Navigation:** Controller- and arrow-key-friendly
-- **Visual feel:** Premium, minimal, futuristic
-
-### Logo direction
-
-A minimal geometric **N** symbol with angular lines, electric-cyan highlights, and a dark background. Keep the shape recognizable at small app-icon sizes.
-
-## Before finalizing the name
-
-These names are creative suggestions and have **not** been verified for uniqueness. Before publishing, check:
-
-1. Trademark availability in the countries where you plan to release the app.
-2. Existing apps and games with the same or similar names.
-3. Domain and social-handle availability.
-4. Whether the name is easy to pronounce and search for.
-
-## Final recommendation
-
-Choose **NexDeck** for the best balance of gaming identity, futuristic style, memorability, and room to grow. Treat it as a working name until availability checks are complete.
+NexDeck is an independent project and is not affiliated with or endorsed by any console manufacturer or game publisher. Product names and trademarks belong to their respective owners.

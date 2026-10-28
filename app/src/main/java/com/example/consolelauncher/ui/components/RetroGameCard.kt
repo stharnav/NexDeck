@@ -36,6 +36,7 @@ import androidx.compose.ui.draw.scale
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.FilterQuality
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.input.key.onKeyEvent
 import androidx.compose.ui.layout.ContentScale
@@ -114,16 +115,18 @@ fun RetroGameCard(
         .clickable(onClick = onClick)
 
     if (vertical) {
+        // History tiles show the title screen at its own 4:3 ratio, so the artwork fills the
+        // slot edge to edge instead of being letterboxed into whatever space the name left over.
         Column(modifier = cardModifier.padding(10.dp)) {
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .weight(1f)
+                    .aspectRatio(TITLES_ASPECT_RATIO)
                     .clip(RoundedCornerShape(10.dp))
                     .background(Color.White.copy(alpha = 0.04f)),
                 contentAlignment = Alignment.Center,
             ) {
-                CardArtwork(coverArt)
+                CardArtwork(coverArt, TITLES_ASPECT_RATIO)
             }
 
             Spacer(Modifier.height(8.dp))
@@ -155,7 +158,7 @@ fun RetroGameCard(
                 .background(Color.White.copy(alpha = 0.04f)),
             contentAlignment = Alignment.Center,
         ) {
-            CardArtwork(coverArt)
+            CardArtwork(coverArt, ARTWORK_ASPECT_RATIO)
         }
 
         Spacer(Modifier.width(12.dp))
@@ -180,15 +183,29 @@ fun RetroGameCard(
     }
 }
 
-/** The decoded artwork of a card, or a placeholder glyph while it is missing. */
+/**
+ * The decoded artwork of a card, or a placeholder glyph while it is missing. Artwork close to the
+ * slot's aspect ratio is cropped to fill the slot exactly, so the image is shown as large as
+ * possible; anything else is fitted so no part of it is cut off.
+ */
 @Composable
-private fun CardArtwork(coverArt: ImageBitmap?) {
+private fun CardArtwork(coverArt: ImageBitmap?, slotAspectRatio: Float) {
     val art = coverArt
     if (art != null) {
+        val aspect = art.width.toFloat() / art.height
+        val contentScale =
+            if (aspect in (slotAspectRatio * 0.85f)..(slotAspectRatio * 1.15f)) {
+                ContentScale.Crop
+            } else {
+                ContentScale.Fit
+            }
         Image(
             bitmap = art,
             contentDescription = null,
-            contentScale = ContentScale.Fit,
+            contentScale = contentScale,
+            // Tiles show the artwork at a fraction of its source size; mipmapped sampling
+            // (High) keeps the downscale crisp instead of bilinear-blurry.
+            filterQuality = FilterQuality.High,
             modifier = Modifier.fillMaxSize(),
         )
     } else {
@@ -204,3 +221,6 @@ private val CARD_CORNER = 14.dp
 
 /** Portrait ratio of the box art RetroArch stores in `Named_Boxarts`. */
 private const val ARTWORK_ASPECT_RATIO = 2f / 3f
+
+/** Landscape ratio of the title screens RetroArch stores in `Named_Titles`. */
+private const val TITLES_ASPECT_RATIO = 4f / 3f

@@ -494,8 +494,8 @@ private val ACTION_CORNER = 12.dp
 private val GAME_CARD_WIDTH = 220.dp
 
 /** History tiles stack the artwork above a divider and the game name. */
-private val HISTORY_CARD_WIDTH = 170.dp
-private val HISTORY_CARD_HEIGHT = 190.dp
+private val HISTORY_CARD_WIDTH = 220.dp
+private val HISTORY_CARD_HEIGHT = 240.dp
 
 /** Room at the row ends so the focused card's scale and glow are not clipped by the LazyRow. */
 private val GAME_ROW_BLEED = 16.dp

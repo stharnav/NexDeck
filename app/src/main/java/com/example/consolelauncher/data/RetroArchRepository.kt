@@ -3,15 +3,18 @@ package com.example.consolelauncher.data
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.net.Uri
 import android.util.Log
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
-import androidx.core.graphics.drawable.toBitmap
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
+import java.io.InputStream
 import java.util.concurrent.ConcurrentHashMap
+import kotlin.math.roundToInt
 
 /**
  * Reads the games RetroArch keeps in its `.lpl` playlists and builds the intents that launch them.
@@ -66,6 +69,12 @@ class RetroArchRepository(context: Context) {
 
         /** Games shown in the home screen history section. */
         private const val HISTORY_LIMIT = 10
+
+        /**
+         * Width in dp of the largest artwork slot (the history tile). Decoded images are
+         * rescaled to this size in real pixels once, so the GPU draws them ~1:1.
+         */
+        private const val ART_TARGET_DP = 200
     }
 
     /** Package name of the installed RetroArch variant, or null when it is not installed. */
@@ -407,32 +416,89 @@ class RetroArchRepository(context: Context) {
         bitmap
     }
 
-    private fun decodeBoxArt(uriString: String): ImageBitmap? = try {
-        contentResolver.openInputStream(Uri.parse(uriString))?.use { input ->
-            android.graphics.drawable.Drawable.createFromStream(input, null)
-                ?.toBitmap()
-                ?.asImageBitmap()
-        }
-    } catch (e: Exception) {
-        Log.d(TAG, "Failed to load box art: $uriString", e)
-        null
+    private fun decodeBoxArt(uriString: String): ImageBitmap? =
+        decodeArtwork { contentResolver.openInputStream(Uri.parse(uriString)) }
+
+    private fun decodeThumbnail(path: String): ImageBitmap? = when {
+        path.startsWith("content://") || path.startsWith("file://") ->
+            decodeArtwork { contentResolver.openInputStream(Uri.parse(path)) }
+
+        else -> decodeArtwork { playlistAccess.openUnderTree(path) }
     }
 
-    private fun decodeThumbnail(path: String): ImageBitmap? = try {
-        val stream = when {
-            path.startsWith("content://") -> contentResolver.openInputStream(Uri.parse(path))
-            path.startsWith("file://") -> contentResolver.openInputStream(Uri.parse(path))
-            else -> playlistAccess.openUnderTree(path)
+    /**
+     * Decodes an artwork image and prepares it for the tiles it is shown in. The source is
+     * rescaled to the slot size in real pixels once, here, instead of by the GPU on every frame,
+     * and upscaled sources (low resolution title screens) get a light sharpen, because plain
+     * bilinear upscaling looks mushy on high density screens.
+     */
+    private fun decodeArtwork(openStream: () -> InputStream?): ImageBitmap? {
+        val source = try {
+            openStream()?.use { BitmapFactory.decodeStream(it) }
+        } catch (e: Exception) {
+            Log.d(TAG, "Failed to decode artwork", e)
+            null
+        } ?: return null
+
+        if (source.width <= 0 || source.height <= 0) return source.asImageBitmap()
+
+        val targetWidth = (ART_TARGET_DP * appContext.resources.displayMetrics.density).roundToInt()
+        val scale = targetWidth.toFloat() / source.width
+        val targetHeight = (source.height * scale).roundToInt().coerceAtLeast(1)
+        val prepared = when {
+            scale in 0.9f..1.1f -> source
+
+            scale > 1f -> {
+                // Upscale with a full size bilinear pass, then sharpen: the gallery style
+                // treatment that keeps low resolution title screens readable.
+                sharpen(Bitmap.createScaledBitmap(source, targetWidth, targetHeight, true))
+            }
+
+            else -> Bitmap.createScaledBitmap(source, targetWidth, targetHeight, true)
         }
-        stream?.use { input ->
-            android.graphics.drawable.Drawable.createFromStream(input, null)
-                ?.toBitmap()
-                ?.asImageBitmap()
-        }
-    } catch (e: Exception) {
-        Log.d(TAG, "Failed to load thumbnail: $path", e)
-        null
+        if (prepared !== source) source.recycle()
+        return prepared.asImageBitmap()
     }
+
+    /**
+     * Mixes a light 3x3 unsharp kernel over [source]: 40% of the 5-point sharpen amount, so
+     * upscaled pixel art gains back edge definition without halos or ringing.
+     */
+    private fun sharpen(source: Bitmap): Bitmap {
+        val width = source.width
+        val height = source.height
+        val pixels = IntArray(width * height)
+        source.getPixels(pixels, 0, width, 0, 0, width, height)
+        val out = IntArray(pixels.size)
+
+        for (y in 0 until height) {
+            val row = y * width
+            val rowUp = if (y == 0) row else row - width
+            val rowDown = if (y == height - 1) row else row + width
+            for (x in 0 until width) {
+                val left = if (x == 0) x else x - 1
+                val right = if (x == width - 1) x else x + 1
+
+                val p = pixels[row + x]
+                val alpha = p ushr 24
+                val up = pixels[rowUp + x]
+                val down = pixels[rowDown + x]
+                val leftPixel = pixels[row + left]
+                val rightPixel = pixels[row + right]
+
+                val r = sharpenChannel((p shr 16) and 0xFF, (up shr 16) and 0xFF, (down shr 16) and 0xFF, (leftPixel shr 16) and 0xFF, (rightPixel shr 16) and 0xFF)
+                val g = sharpenChannel((p shr 8) and 0xFF, (up shr 8) and 0xFF, (down shr 8) and 0xFF, (leftPixel shr 8) and 0xFF, (rightPixel shr 8) and 0xFF)
+                val b = sharpenChannel(p and 0xFF, up and 0xFF, down and 0xFF, leftPixel and 0xFF, rightPixel and 0xFF)
+
+                out[row + x] = (alpha shl 24) or (r shl 16) or (g shl 8) or b
+            }
+        }
+        return Bitmap.createBitmap(out, width, height, Bitmap.Config.ARGB_8888)
+    }
+
+    /** `center + 40% of (4 * center - neighbours)`, clamped; half the strength of the kernel. */
+    private fun sharpenChannel(center: Int, up: Int, down: Int, left: Int, right: Int): Int =
+        (center + ((4 * center - up - down - left - right) * 2) / 5).coerceIn(0, 255)
 
     /** Checks if RetroArch is available. */
     fun isAvailable(): Boolean = resolvePackage() != null

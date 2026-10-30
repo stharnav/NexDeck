@@ -179,9 +179,17 @@ class RetroArchRepository(context: Context) {
             playlistName = HISTORY_PLAYLIST,
             systemFolders = HISTORY_SYSTEM_FOLDERS,
             artworkFolders = HISTORY_ARTWORK_FOLDERS,
+            scanEverySystemFolder = true,
         )
-        Log.d(TAG, "Loaded ${history.size} history entries")
-        history.take(HISTORY_LIMIT)
+        // The history can hold the same ROM path twice (a game launched from within RetroArch is
+        // recorded again when it is launched through the launcher). RetroArch keeps the newest run
+        // first, so the first occurrence is kept; duplicate ids would crash the grid keyed by them.
+        val seenPaths = mutableSetOf<String>()
+        val uniqueHistory = history.filter {
+            seenPaths.add(it.romPath)
+        }
+        Log.d(TAG, "Loaded ${history.size} history entries (${uniqueHistory.size} unique)")
+        uniqueHistory.take(HISTORY_LIMIT)
     }
 
     /** Display name of a SAF document, used to name the playlist. */
@@ -201,12 +209,18 @@ class RetroArchRepository(context: Context) {
         null
     }
 
-    /** Parses a single `.lpl` playlist file (JSON format). */
+    /**
+     * Parses a single `.lpl` playlist file (JSON format). With [scanEverySystemFolder] the
+     * artwork scan also covers system folders under `thumbnails/` that no entry references, so
+     * entries without their own system (RetroArch history of content launched without a playlist)
+     * can still find their cover art by name.
+     */
     private suspend fun parsePlaylistFile(
         playlistUri: Uri,
         playlistName: String,
         systemFolders: List<String> = listOf(playlistName),
         artworkFolders: List<String> = listOf(RetroArchPlaylistAccess.BOXARTS_DIR),
+        scanEverySystemFolder: Boolean = false,
     ): List<RetroGameEntry> {
         val jsonText = playlistAccess.readPlaylistFile(playlistUri) ?: return emptyList()
         return try {
@@ -250,7 +264,11 @@ class RetroArchRepository(context: Context) {
             // folders are tried best first.
             val systems = rawItems.mapNotNull { it.dbName }.distinct()
             val artBySystem = artworkFolders.associateWith { artworkFolder ->
-                playlistAccess.listArtworkPerSystem(systemFolders + systems, artworkFolder)
+                playlistAccess.listArtworkPerSystem(
+                    systemFolders + systems,
+                    artworkFolder,
+                    scanEverySystemFolder = scanEverySystemFolder,
+                )
             }
             val games = mutableListOf<RetroGameEntry>()
 
@@ -305,6 +323,9 @@ class RetroArchRepository(context: Context) {
      * game runs on; the playlist's own folders are the fallback. Within a system, the artwork
      * folders of [artworkFolders] are tried best first. Art files are named after the ROM or the
      * playlist label.
+     *
+     * A final pass searches every other scanned system folder, for history entries whose content
+     * was launched without a playlist and therefore stores no `db_name`.
      */
     private fun boxArtFor(
         artBySystem: Map<String, Map<String, Map<String, Uri>>>,
@@ -324,6 +345,18 @@ class RetroArchRepository(context: Context) {
                 }
             }
         }
+            ?: artworkFolders.firstNotNullOfOrNull { artworkFolder ->
+                artBySystem[artworkFolder]
+                    ?.filterKeys { it !in folders }
+                    ?.firstNotNullOfOrNull { (folder, art) ->
+                        keys.firstNotNullOfOrNull(art::get)?.also { uri ->
+                            Log.d(
+                                TAG,
+                                "Box art for '${item.label.ifEmpty { item.romPath }}' found via extra system folder '$folder': $uri",
+                            )
+                        }
+                    }
+            }
     }
 
     private fun String.trimCoreSuffix(): String =

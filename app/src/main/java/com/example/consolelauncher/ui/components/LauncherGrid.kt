@@ -17,7 +17,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
-import androidx.compose.foundation.lazy.items as lazyItems
+import androidx.compose.foundation.lazy.itemsIndexed as lazyItemsIndexed
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
@@ -379,7 +379,9 @@ private fun GameSystemRow(
         contentPadding = PaddingValues(horizontal = GAME_ROW_BLEED),
         horizontalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        lazyItems(items = games, key = { it.gridKey }) { entry ->
+        // Keys embed the index so a data source that yields the same game twice (which the
+        // history playlist occasionally does) cannot crash the row with duplicate keys.
+        lazyItemsIndexed(items = games, key = { index, entry -> "${entry.gridKey}_$index" }) { _, entry ->
             val isFirst = firstItemRequester != null && firstKey == entry.gridKey
             RetroGameCard(
                 entry = entry,

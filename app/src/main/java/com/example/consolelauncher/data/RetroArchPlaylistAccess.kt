@@ -292,10 +292,15 @@ class RetroArchPlaylistAccess(context: Context) {
      * URI, keyed by the folder's [normalizedKey], so a caller can pick the folder of a single
      * entry's system without mixing up games that share a name across systems. Folders that do not
      * exist below the granted tree (e.g. only `playlists` was picked) are simply absent.
+     *
+     * With [scanEverySystemFolder] the remaining directories below `thumbnails/` are scanned too,
+     * for playlists whose entries reference no system database — RetroArch history entries of
+     * content launched without a playlist store no `db_name`, so their system stays unknown.
      */
     suspend fun listArtworkPerSystem(
         systemFolders: List<String>,
         artworkFolder: String = BOXARTS_DIR,
+        scanEverySystemFolder: Boolean = false,
     ): Map<String, Map<String, Uri>> = withContext(Dispatchers.IO) {
         val treeUri = getPlaylistsUri() ?: return@withContext emptyMap()
         val rootDocumentId = runCatching { DocumentsContract.getTreeDocumentId(treeUri) }.getOrNull()
@@ -319,24 +324,85 @@ class RetroArchPlaylistAccess(context: Context) {
                 continue
             }
 
-            val artId = childDirectoryId(treeUri, systemId, artworkFolder)
-            if (artId == null) {
+            val artByBaseName = listArtFolderFiles(treeUri, systemId, artworkFolder)
+            if (artByBaseName != null) {
+                artBySystem[systemKey] = artByBaseName
+                Log.d(TAG, "Found ${artByBaseName.size} $artworkFolder files for '$systemFolder'")
+            } else {
                 Log.d(TAG, "No $artworkFolder folder below the '$systemFolder' thumbnails")
-                continue
             }
+        }
 
-            val artByBaseName = mutableMapOf<String, Uri>()
-            listDocuments(treeUri, artId) { id, displayName, isDirectory ->
-                if (!isDirectory) {
-                    artByBaseName[displayName.substringBeforeLast('.').normalizedKey()] =
-                        DocumentsContract.buildDocumentUriUsingTree(treeUri, id)
+        if (scanEverySystemFolder) {
+            for ((systemId, systemName) in listDirectories(treeUri, thumbnailsId)) {
+                val systemKey = systemName.normalizedKey()
+                if (systemKey.isEmpty() || systemKey in artBySystem) continue
+
+                val artByBaseName = listArtFolderFiles(treeUri, systemId, artworkFolder)
+                if (!artByBaseName.isNullOrEmpty()) {
+                    artBySystem[systemKey] = artByBaseName
+                    Log.d(TAG, "Found ${artByBaseName.size} $artworkFolder files for extra system '$systemName'")
                 }
-                null
             }
-            artBySystem[systemKey] = artByBaseName
-            Log.d(TAG, "Found ${artByBaseName.size} $artworkFolder files for '$systemFolder'")
         }
         artBySystem
+    }
+
+    /** Art of `thumbnails/<systemId>/<artworkFolder>`, null when either folder does not exist. */
+    private fun listArtFolderFiles(
+        treeUri: Uri,
+        systemId: String,
+        artworkFolder: String,
+    ): Map<String, Uri>? {
+        val artId = childDirectoryId(treeUri, systemId, artworkFolder) ?: return null
+        val artByBaseName = mutableMapOf<String, Uri>()
+        listDocuments(treeUri, artId) { id, displayName, isDirectory ->
+            if (!isDirectory) {
+                artByBaseName[displayName.substringBeforeLast('.').normalizedKey()] =
+                    DocumentsContract.buildDocumentUriUsingTree(treeUri, id)
+            }
+            null
+        }
+        return artByBaseName
+    }
+
+    /** Document ids and names of every directory below [parentDocumentId]. */
+    private fun listDirectories(treeUri: Uri, parentDocumentId: String): List<Pair<String, String>> {
+        val childrenUri = try {
+            DocumentsContract.buildChildDocumentsUriUsingTree(treeUri, parentDocumentId)
+        } catch (e: Exception) {
+            Log.w(TAG, "Invalid document id: $parentDocumentId", e)
+            return emptyList()
+        }
+        return try {
+            contentResolver.query(
+                childrenUri,
+                arrayOf(
+                    DocumentsContract.Document.COLUMN_DOCUMENT_ID,
+                    DocumentsContract.Document.COLUMN_DISPLAY_NAME,
+                    DocumentsContract.Document.COLUMN_MIME_TYPE,
+                ),
+                null,
+                null,
+                null,
+            )?.use { cursor ->
+                val idIndex = cursor.getColumnIndex(DocumentsContract.Document.COLUMN_DOCUMENT_ID)
+                val nameIndex = cursor.getColumnIndex(DocumentsContract.Document.COLUMN_DISPLAY_NAME)
+                val mimeIndex = cursor.getColumnIndex(DocumentsContract.Document.COLUMN_MIME_TYPE)
+                if (idIndex < 0 || nameIndex < 0) return emptyList()
+                buildList {
+                    while (cursor.moveToNext()) {
+                        val id = cursor.getString(idIndex) ?: continue
+                        val name = cursor.getString(nameIndex) ?: continue
+                        val mime = if (mimeIndex >= 0) cursor.getString(mimeIndex) else null
+                        if (mime == DocumentsContract.Document.MIME_TYPE_DIR) add(id to name)
+                    }
+                }
+            } ?: emptyList()
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to list children of $parentDocumentId", e)
+            emptyList()
+        }
     }
 
     /** Document id of the child directory named [name] (case-insensitive), or null. */

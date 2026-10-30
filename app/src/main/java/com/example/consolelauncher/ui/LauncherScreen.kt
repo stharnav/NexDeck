@@ -256,6 +256,7 @@ private fun HintBar() {
     ) {
         Hint("D-PAD", "NAVIGATE")
         Hint("ENTER", "LAUNCH")
+        Hint("KEYS", "SEARCH")
         Hint("BACK", "HOME")
         Hint("L1 / R1", "SWITCH TAB")
     }

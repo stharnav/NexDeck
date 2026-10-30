@@ -1,13 +1,17 @@
 package com.example.consolelauncher.ui.components
 
+import android.content.res.Configuration
 import android.view.KeyEvent
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.focusable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -23,6 +27,11 @@ import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items as gridItems
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -35,12 +44,22 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
+import androidx.compose.ui.focus.FocusDirection
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.input.key.onKeyEvent
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.platform.SoftwareKeyboardController
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -185,9 +204,10 @@ private inline fun Modifier.thenIf(condition: Boolean, crossinline block: Modifi
     if (condition) this.block() else this
 
 /**
- * The GAMES tab: each system (RetroArch playlist) is a single horizontally scrollable row of
- * game cards. A gamepad can dash through a system's games left/right and move between systems
- * up/down.
+ * The GAMES tab: a search bar to filter by game name, a row of chips to filter by system, and
+ * each system (RetroArch playlist) as a single horizontally scrollable row of game cards. A
+ * gamepad can type in the search bar, move down into the results, and dash through a system's
+ * games left/right.
  */
 @Composable
 fun LauncherGameSystems(
@@ -204,19 +224,35 @@ fun LauncherGameSystems(
     autoFocusFirstItem: Boolean = false,
     modifier: Modifier = Modifier,
 ) {
-    val firstItemRequester = remember { FocusRequester() }
-    val firstGame = remember(games) {
-        games.groupBy { it.playlistName }
-            .toSortedMap(String.CASE_INSENSITIVE_ORDER)
-            .values
-            .asSequence()
-            .flatten()
-            .firstOrNull()
-    }
-    val firstGameKey = firstGame?.gridKey
+    var searchQuery by remember { mutableStateOf("") }
+    var selectedSystem by remember { mutableStateOf<String?>(null) }
 
-    LaunchedEffect(firstGameKey) {
-        if (!autoFocusFirstItem || firstGameKey == null) return@LaunchedEffect
+    val systems = remember(games) {
+        games.map { it.playlistName }
+            .distinct()
+            .sortedWith(String.CASE_INSENSITIVE_ORDER)
+    }
+
+    /**
+     * Games matching both the name query (label or system name) and the selected system filter,
+     * recomputed only when one of the three inputs changes.
+     */
+    val matches = remember(games, searchQuery, selectedSystem) {
+        val query = searchQuery.trim()
+        games.filter { entry ->
+            val systemMatches = selectedSystem == null ||
+                entry.playlistName.equals(selectedSystem, ignoreCase = true)
+            val nameMatches = query.isBlank() ||
+                entry.label.contains(query, ignoreCase = true) ||
+                entry.playlistName.contains(query, ignoreCase = true)
+            systemMatches && nameMatches
+        }
+    }
+
+    val firstItemRequester = remember { FocusRequester() }
+
+    LaunchedEffect(autoFocusFirstItem) {
+        if (!autoFocusFirstItem) return@LaunchedEffect
         repeat(10) {
             delay(150)
             if (firstItemRequester.requestFocus()) return@LaunchedEffect
@@ -265,7 +301,7 @@ fun LauncherGameSystems(
                         },
                         modifier = Modifier
                             .fillMaxWidth()
-                            .thenIf(firstGameKey == null) { focusRequester(firstItemRequester) },
+                            .thenIf(autoFocusFirstItem) { focusRequester(firstItemRequester) },
                     )
                 }
             }
@@ -287,7 +323,9 @@ fun LauncherGameSystems(
                                 ),
                             )
                         },
-                        modifier = Modifier.fillMaxWidth(),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .thenIf(autoFocusFirstItem) { focusRequester(firstItemRequester) },
                     )
                 }
                 item(key = "refresh") {
@@ -309,32 +347,73 @@ fun LauncherGameSystems(
             }
 
             else -> {
+                // With a single system the search field spans the whole row, otherwise it
+                // takes 3/4 and the system dropdown the remaining 1/4.
+                item(key = "search_row") {
+                    if (systems.size > 1) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(12.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Box(modifier = Modifier.weight(3f)) {
+                                GameSearchBar(
+                                    query = searchQuery,
+                                    onQueryChange = { searchQuery = it },
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .thenIf(autoFocusFirstItem) { focusRequester(firstItemRequester) },
+                                )
+                            }
+
+                            Box(modifier = Modifier.weight(1f)) {
+                                SystemDropdown(
+                                    systems = systems,
+                                    selectedSystem = selectedSystem,
+                                    onSelectSystem = { selectedSystem = it },
+                                    modifier = Modifier.fillMaxWidth(),
+                                )
+                            }
+                        }
+                    } else {
+                        GameSearchBar(
+                            query = searchQuery,
+                            onQueryChange = { searchQuery = it },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .thenIf(autoFocusFirstItem) { focusRequester(firstItemRequester) },
+                        )
+                    }
+                }
+
                 if (error != null) {
                     item(key = "error") { MessageText(error) }
                 }
-                games.groupBy { it.playlistName }
-                    .toSortedMap(String.CASE_INSENSITIVE_ORDER)
-                    .forEach { (playlist, entries) ->
-                        item(key = "section_$playlist") {
-                            SectionTitle(playlist.uppercase())
-                        }
-                        item(key = "row_$playlist") {
-                            GameSystemRow(
-                                games = entries,
-                                onLaunchGame = onLaunchGame,
-                                onLoadThumbnail = onLoadThumbnail,
-                                onLoadBoxArt = onLoadBoxArt,
-                                modifier = Modifier.fillMaxWidth(),
-                                firstItemRequester = if (
-                                    firstGameKey == entries.firstOrNull()?.gridKey
-                                ) {
-                                    firstItemRequester
-                                } else {
-                                    null
-                                },
-                            )
-                        }
+
+                if (matches.isEmpty()) {
+                    item(key = "no_matches") {
+                        MessageText(
+                            noMatchMessage(searchQuery, selectedSystem),
+                        )
                     }
+                } else {
+                    matches.groupBy { it.playlistName }
+                        .toSortedMap(String.CASE_INSENSITIVE_ORDER)
+                        .forEach { (playlist, entries) ->
+                            item(key = "section_$playlist") {
+                                SectionTitle(playlist.uppercase())
+                            }
+                            item(key = "row_$playlist") {
+                                GameSystemRow(
+                                    games = entries,
+                                    onLaunchGame = onLaunchGame,
+                                    onLoadThumbnail = onLoadThumbnail,
+                                    onLoadBoxArt = onLoadBoxArt,
+                                    modifier = Modifier.fillMaxWidth(),
+                                )
+                            }
+                        }
+                }
                 item(key = "change_folder") {
                     ActionTile(
                         label = "CHANGE PLAYLIST FOLDER",
@@ -354,6 +433,298 @@ fun LauncherGameSystems(
             }
         }
     }
+}
+
+/**
+ * The game search field.
+ *
+ * The field is read-only until the user presses it once. GAMES tab entry auto-focuses the field,
+ * and a focused editable field would pop the on-screen keyboard on its own; the read-only gate
+ * keeps that from happening so the keyboard only comes with an explicit touch.
+ *
+ * Pressing the box again toggles the on-screen keyboard back down (a connected hardware keyboard
+ * is detected, and the IME is simply skipped for it). While the field is read-only, a hardware
+ * key press unlocks typing and enters that character directly.
+ */
+@Composable
+private fun GameSearchBar(
+    query: String,
+    onQueryChange: (String) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    var focused by remember { mutableStateOf(false) }
+    var interactive by remember { mutableStateOf(false) }
+    var keyboardUp by remember { mutableStateOf(false) }
+    val clickFocus = remember { FocusRequester() }
+    val focusManager = LocalFocusManager.current
+    val keyboard = LocalSoftwareKeyboardController.current
+    val hasHardwareKeyboard = LocalConfiguration.current.keyboard != Configuration.KEYBOARD_NOKEYS
+    val shape = RoundedCornerShape(ACTION_CORNER)
+
+    fun showKeyboard() {
+        if (!hasHardwareKeyboard) {
+            keyboard?.show()
+        }
+        keyboardUp = true
+    }
+
+    fun hideKeyboard() {
+        keyboard?.hide()
+        keyboardUp = false
+    }
+
+    fun toggleKeyboard() {
+        if (keyboardUp) hideKeyboard() else showKeyboard()
+    }
+
+    Box(modifier) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(shape)
+                .background(if (focused) ConsoleAccent.copy(alpha = 0.16f) else ConsoleSurface)
+                .border(
+                    width = if (focused) 2.dp else 1.dp,
+                    color = if (focused) ConsoleAccent else ConsoleStroke,
+                    shape = shape,
+                )
+                .onFocusChanged { state ->
+                    focused = state.isFocused
+                    if (!state.isFocused) {
+                        // Refocusing through the D-pad must not re-trigger the keyboard, so
+                        // the field locks again whenever it loses focus.
+                        interactive = false
+                        hideKeyboard()
+                    }
+                }
+                .padding(horizontal = 16.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                text = "SEARCH",
+                style = MaterialTheme.typography.labelLarge,
+                fontWeight = FontWeight.Bold,
+                letterSpacing = 1.sp,
+                color = if (focused) ConsoleAccent else ConsoleTextSecondary,
+            )
+            Spacer(Modifier.width(12.dp))
+            BasicTextField(
+                value = query,
+                onValueChange = { onQueryChange(it.take(SEARCH_MAX_LENGTH)) },
+                readOnly = !interactive,
+                singleLine = true,
+                textStyle = MaterialTheme.typography.bodyMedium.copy(color = ConsoleTextPrimary),
+                cursorBrush = SolidColor(ConsoleAccent),
+                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+                keyboardActions = KeyboardActions(onDone = { hideKeyboard() }),
+                modifier = Modifier
+                    .weight(1f)
+                    .focusRequester(clickFocus)
+                    .onPreviewKeyEvent { event ->
+                        if (event.nativeKeyEvent.action != KeyEvent.ACTION_DOWN) {
+                            return@onPreviewKeyEvent false
+                        }
+                        when (event.nativeKeyEvent.keyCode) {
+                            // Single-line fields do not move the focus on D-pad up/down,
+                            // so translate them into focus moves to keep navigating past
+                            // the search bar.
+                            KeyEvent.KEYCODE_DPAD_DOWN -> focusManager.moveFocus(FocusDirection.Down)
+                            KeyEvent.KEYCODE_DPAD_UP -> focusManager.moveFocus(FocusDirection.Up)
+                            else -> {
+                                val ch = event.nativeKeyEvent.getUnicodeChar()
+                                if (ch >= ' '.code) {
+                                    // A hardware keyboard unlocks the read-only field; the
+                                    // first character is entered by hand while the field is
+                                    // still read-only.
+                                    if (!interactive) {
+                                        interactive = true
+                                        onQueryChange((query + ch.toChar()).take(SEARCH_MAX_LENGTH))
+                                    }
+                                    true
+                                } else {
+                                    false
+                                }
+                            }
+                        }
+                    },
+                decorationBox = { innerTextField ->
+                    if (query.isBlank()) {
+                        Text(
+                            text = "TAP TO TYPE A GAME NAME OR SYSTEM...",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = ConsoleTextSecondary,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
+                    innerTextField()
+                },
+            )
+            if (keyboardUp) {
+                Spacer(Modifier.width(12.dp))
+                Text(
+                    text = "⌨",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = ConsoleTextSecondary,
+                )
+            }
+        }
+
+        TransparentTapSurface(
+            onTap = {
+                if (!focused) clickFocus.requestFocus()
+                interactive = true
+                toggleKeyboard()
+            },
+        )
+    }
+}
+
+/**
+ * An invisible surface covering the whole search row. It intercepts taps so that they cannot
+ * reach the text field itself (a focused editable field would pop up the IME on its own); the
+ * tap handler owns the keyboard up/down behavior.
+ */
+@Composable
+private fun BoxScope.TransparentTapSurface(
+    onTap: () -> Unit,
+) {
+    Box(
+        modifier = Modifier
+            .matchParentSize()
+            .clickable(onClick = onTap),
+    )
+}
+
+/**
+ * The 1/4-width system selector: a compact tile showing the current filter that opens a dropdown
+ * menu of every system (playlist) plus an "ALL SYSTEMS" option.
+ */
+@Composable
+private fun SystemDropdown(
+    systems: List<String>,
+    selectedSystem: String?,
+    onSelectSystem: (String?) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    var expanded by remember { mutableStateOf(false) }
+    var focused by remember { mutableStateOf(false) }
+    val shape = RoundedCornerShape(ACTION_CORNER)
+    val active = focused || expanded
+
+    Box(modifier) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(shape)
+                .background(if (active) ConsoleAccent.copy(alpha = 0.16f) else ConsoleSurface)
+                .border(
+                    width = if (active) 2.dp else 1.dp,
+                    color = if (active) ConsoleAccent else ConsoleStroke,
+                    shape = shape,
+                )
+                .onFocusChanged { focused = it.isFocused }
+                .focusable()
+                .onKeyEvent { event ->
+                    if (event.nativeKeyEvent.action == KeyEvent.ACTION_DOWN && event.isSelectKey()) {
+                        expanded = true
+                        true
+                    } else {
+                        false
+                    }
+                }
+                .clickable { expanded = true }
+                .padding(horizontal = 14.dp, vertical = 10.dp),
+        ) {
+            Text(
+                text = selectedSystem?.uppercase() ?: "ALL",
+                style = MaterialTheme.typography.bodyMedium,
+                fontWeight = FontWeight.Bold,
+                color = if (selectedSystem == null) ConsoleTextSecondary else ConsoleTextPrimary,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f),
+            )
+            Spacer(Modifier.width(8.dp))
+            Text(
+                text = "▾",
+                style = MaterialTheme.typography.bodySmall,
+                color = ConsoleTextSecondary,
+            )
+        }
+
+        DropdownMenu(
+            expanded = expanded,
+            onDismissRequest = { expanded = false },
+        ) {
+            val firstOption = remember { FocusRequester() }
+
+            // The popup starts without focus; put the focus on its first option so that a
+            // gamepad can move through the options and confirm with select.
+            LaunchedEffect(firstOption) {
+                repeat(10) {
+                    delay(150)
+                    if (firstOption.requestFocus()) return@LaunchedEffect
+                }
+            }
+
+            SystemMenuOption(
+                label = "ALL SYSTEMS",
+                selected = selectedSystem == null,
+                onClick = {
+                    onSelectSystem(null)
+                    expanded = false
+                },
+                modifier = Modifier.focusRequester(firstOption),
+            )
+            systems.forEach { system ->
+                SystemMenuOption(
+                    label = system.uppercase(),
+                    selected = selectedSystem != null && system.equals(selectedSystem, ignoreCase = true),
+                    onClick = {
+                        onSelectSystem(system)
+                        expanded = false
+                    },
+                )
+            }
+        }
+    }
+}
+
+/** A dropdown option row that highlights on D-pad focus and opens with the select key. */
+@Composable
+private fun SystemMenuOption(
+    label: String,
+    selected: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    var focused by remember { mutableStateOf(false) }
+
+    DropdownMenuItem(
+        text = {
+            Text(
+                text = label,
+                style = MaterialTheme.typography.labelLarge,
+                fontWeight = FontWeight.Bold,
+                letterSpacing = 1.sp,
+                color = if (selected || focused) ConsoleAccent else ConsoleTextPrimary,
+            )
+        },
+        onClick = onClick,
+        modifier = modifier
+            .background(if (focused) ConsoleAccent.copy(alpha = 0.14f) else Color.Transparent)
+            .onFocusChanged { focused = it.isFocused }
+            .focusable()
+            .onKeyEvent { event ->
+                if (event.nativeKeyEvent.action == KeyEvent.ACTION_DOWN && event.isSelectKey()) {
+                    onClick()
+                    true
+                } else {
+                    false
+                }
+            },
+    )
 }
 
 /** One horizontally scrollable row of games belonging to a single system/playlist. */
@@ -501,6 +872,18 @@ private val HISTORY_CARD_HEIGHT = 240.dp
 
 /** Room at the row ends so the focused card's scale and glow are not clipped by the LazyRow. */
 private val GAME_ROW_BLEED = 16.dp
+
+/** Search input is capped so a stuck repeating key cannot fill the field. */
+private const val SEARCH_MAX_LENGTH = 60
+
+private fun noMatchMessage(query: String, system: String?): String {
+    val parts = buildList {
+        if (query.isNotBlank()) add("\"${query.trim()}\"")
+        if (system != null) add("in ${system.uppercase()}")
+    }
+    val descriptor = if (parts.isEmpty()) "" else " ${parts.joinToString(" ")}"
+    return "No games match$descriptor. Adjust the search or the system filter above."
+}
 
 internal const val ACTION_GRANT_PLAYLISTS = "games_grant_playlists"
 internal const val ACTION_CHANGE_PLAYLISTS = "games_change_playlists"

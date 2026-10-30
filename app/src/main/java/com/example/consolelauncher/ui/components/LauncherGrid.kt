@@ -117,12 +117,13 @@ fun LauncherGrid(
     onLoadThumbnail: suspend (String) -> ImageBitmap? = { null },
     onLoadBoxArt: suspend (String) -> ImageBitmap? = { null },
     autoFocusFirstItem: Boolean = false,
+    focusEpoch: Int = 0,
     modifier: Modifier = Modifier,
 ) {
     val firstItemRequester = remember { FocusRequester() }
     val firstFocusableKey = remember(rows) { rows.firstNotNullOfOrNull { it.focusKey } }
 
-    LaunchedEffect(firstFocusableKey) {
+    LaunchedEffect(firstFocusableKey, focusEpoch) {
         if (!autoFocusFirstItem || firstFocusableKey == null) return@LaunchedEffect
         repeat(10) {
             delay(150)
@@ -222,6 +223,7 @@ fun LauncherGameSystems(
     onLoadBoxArt: suspend (String) -> ImageBitmap? = { null },
     onAction: (LauncherRow.Action) -> Unit = {},
     autoFocusFirstItem: Boolean = false,
+    focusEpoch: Int = 0,
     modifier: Modifier = Modifier,
 ) {
     var searchQuery by remember { mutableStateOf("") }
@@ -251,7 +253,7 @@ fun LauncherGameSystems(
 
     val firstItemRequester = remember { FocusRequester() }
 
-    LaunchedEffect(autoFocusFirstItem) {
+    LaunchedEffect(autoFocusFirstItem, focusEpoch) {
         if (!autoFocusFirstItem) return@LaunchedEffect
         repeat(10) {
             delay(150)

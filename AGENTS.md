@@ -28,6 +28,7 @@ MainActivity (entry, HOME intent filter)
       ├─ RecentAppsStore (SharedPreferences, newline-separated package list, sync commit)
       └─ LauncherGrid (LazyVerticalGrid, 4 columns, focus management)
       └─ LauncherGameSystems (GAMES tab: one horizontal row per system/playlist)
+      └─ DrawerOverlay (collapsible left drawer, slides above the launcher; items: HOME, SETUP, SCREENSHOTS, STEAM, SETTINGS)
 ```
 
 ## Launcher-Specific Details
@@ -35,7 +36,8 @@ MainActivity (entry, HOME intent filter)
 - **Orientation**: `landscape` locked in manifest
 - **Launch mode**: `singleTask`, `excludeFromRecents`, `stateNotNeeded`
 - **Fullscreen**: Edge-to-edge, transient system bars (swipe to reveal)
-- **Input**: D-pad/arrow keys navigate, Enter launches, L1/R1 switch tabs, Back → Home tab
+- **Input**: D-pad/arrow keys navigate, Enter launches, hamburger icon in the top bar or MENU/Y toggles the drawer, L1/R1 switch tabs, Back → close drawer → Home tab
+- **Drawer**: opens as an overlay (scrim + sliding panel) on top of the launcher content; the entry of the open screen stays accent-highlighted and receives the D-pad focus when the drawer opens. The top-bar tab strip only appears on the HOME menu; closing the drawer bumps a `focusEpoch` counter so the screen resumes D-pad focus
 
 ## Data Layer
 - `AppRepository.loadLaunchableApps()`: Queries `ACTION_MAIN + CATEGORY_LAUNCHER`, filters self, caches icons in `ConcurrentHashMap`

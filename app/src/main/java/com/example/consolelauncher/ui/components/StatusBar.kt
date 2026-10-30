@@ -17,6 +17,7 @@ import android.telephony.TelephonyManager
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.focusable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
@@ -38,6 +39,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
@@ -68,12 +70,14 @@ enum class LauncherTab(val title: String) {
 }
 
 /**
- * The console style top bar: word mark, tab strip and the system status indicators.
+ * The console style top bar: drawer toggle, word mark, tab strip and the system status indicators.
  */
 @Composable
 fun StatusBar(
     selectedTab: LauncherTab,
     onTabSelected: (LauncherTab) -> Unit,
+    onOpenDrawer: () -> Unit = {},
+    showTabs: Boolean = true,
     modifier: Modifier = Modifier,
 ) {
     Row(
@@ -83,6 +87,10 @@ fun StatusBar(
             .padding(horizontal = 20.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
+        HamburgerButton(onClick = onOpenDrawer)
+
+        Spacer(Modifier.width(12.dp))
+
         Text(
             text = "CONSOLE LAUNCHER",
             style = MaterialTheme.typography.titleSmall,
@@ -91,21 +99,56 @@ fun StatusBar(
             color = ConsoleTextPrimary,
         )
 
-        Spacer(Modifier.width(24.dp))
+        // The tab strip belongs to the HOME screen only; other drawer menus have no tabs.
+        if (showTabs) {
+            Spacer(Modifier.width(24.dp))
 
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            LauncherTab.entries.forEach { tab ->
-                TabChip(
-                    tab = tab,
-                    selected = tab == selectedTab,
-                    onClick = { onTabSelected(tab) },
-                )
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                LauncherTab.entries.forEach { tab ->
+                    TabChip(
+                        tab = tab,
+                        selected = tab == selectedTab,
+                        onClick = { onTabSelected(tab) },
+                    )
+                }
             }
         }
 
         Spacer(Modifier.weight(1f))
 
         StatusIndicators()
+    }
+}
+
+/** The drawer toggle: a hamburger glyph styled like the tab chips, so it also lights up on focus. */
+@Composable
+private fun HamburgerButton(onClick: () -> Unit) {
+    var focused by remember { mutableStateOf(false) }
+
+    Box(
+        modifier = Modifier
+            .size(36.dp)
+            .clip(RoundedCornerShape(8.dp))
+            .background(if (focused) ConsoleAccent else ConsoleSurface)
+            .onFocusChanged { focused = it.isFocused }
+            .focusable()
+            .clickable(onClick = onClick),
+        contentAlignment = Alignment.Center,
+    ) {
+        Canvas(modifier = Modifier.size(width = 18.dp, height = 14.dp)) {
+            val color = if (focused) ConsoleOnAccent else ConsoleTextPrimary
+            val centerY = size.height / 2f
+            for (offset in listOf(-4.dp, 0.dp, 4.dp)) {
+                val y = centerY + offset.toPx()
+                drawLine(
+                    color = color,
+                    start = Offset(0f, y),
+                    end = Offset(size.width, y),
+                    strokeWidth = 2.dp.toPx(),
+                    cap = StrokeCap.Round,
+                )
+            }
+        }
     }
 }
 

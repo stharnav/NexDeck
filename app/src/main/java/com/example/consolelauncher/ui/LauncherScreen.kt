@@ -43,10 +43,14 @@ import com.example.consolelauncher.ui.components.LauncherGameSystems
 import com.example.consolelauncher.ui.components.ACTION_CHANGE_PLAYLISTS
 import com.example.consolelauncher.ui.components.ACTION_GRANT_PLAYLISTS
 import com.example.consolelauncher.ui.components.ACTION_REFRESH_GAMES
+import com.example.consolelauncher.ui.components.DrawerMenuItem
+import com.example.consolelauncher.ui.components.DrawerOverlay
+import com.example.consolelauncher.ui.components.EmptyScreen
 import com.example.consolelauncher.ui.components.LauncherGrid
 import com.example.consolelauncher.ui.components.LauncherRow
 import com.example.consolelauncher.ui.components.LauncherTab
 import com.example.consolelauncher.ui.components.StatusBar
+import com.example.consolelauncher.ui.components.launchSteamLink
 import com.example.consolelauncher.ui.theme.ConsoleTextSecondary
 
 /**
@@ -68,6 +72,11 @@ fun LauncherRoot(
     var apps by remember { mutableStateOf<List<AppEntry>>(emptyList()) }
     var recents by remember { mutableStateOf<List<AppEntry>>(emptyList()) }
     var selectedTab by remember { mutableStateOf(LauncherTab.HOME) }
+    var selectedMenu by remember { mutableStateOf(DrawerMenuItem.HOME) }
+    var drawerOpen by remember { mutableStateOf(false) }
+    // Bumped every time the drawer closes so the screen content grabs the D-pad focus back.
+    var focusEpoch by remember { mutableIntStateOf(0) }
+    var steamLinkMissing by remember { mutableStateOf(false) }
 
     var retroGames by remember { mutableStateOf<List<RetroGameEntry>>(emptyList()) }
     var historyGames by remember { mutableStateOf<List<RetroGameEntry>>(emptyList()) }
@@ -135,6 +144,17 @@ fun LauncherRoot(
         }
     }
 
+    fun handleMenu(item: DrawerMenuItem) {
+        steamLinkMissing = false
+        drawerOpen = false
+        focusEpoch++
+        selectedMenu = item
+        if (item == DrawerMenuItem.STEAM && !context.launchSteamLink()) {
+            // No Steam Link installed: the STEAM screen explains it instead of going blank.
+            steamLinkMissing = true
+        }
+    }
+
     fun handleGameAction(action: LauncherRow.Action) {
         when (action.key) {
             ACTION_GRANT_PLAYLISTS, ACTION_CHANGE_PLAYLISTS -> {
@@ -173,18 +193,41 @@ fun LauncherRoot(
                     return@onPreviewKeyEvent false
                 }
                 when (event.nativeKeyEvent.keyCode) {
-                    KeyEvent.KEYCODE_BUTTON_L1 -> {
-                        selectedTab = selectedTab.previous()
+                    // MENU or Y toggles the drawer above the launcher.
+                    KeyEvent.KEYCODE_MENU, KeyEvent.KEYCODE_BUTTON_Y -> {
+                        drawerOpen = !drawerOpen
+                        if (!drawerOpen) focusEpoch++
                         true
+                    }
+
+                    // L1 / R1 flip the tabs of the HOME screen while the drawer is closed.
+                    KeyEvent.KEYCODE_BUTTON_L1 -> {
+                        if (!drawerOpen && selectedMenu == DrawerMenuItem.HOME) {
+                            selectedTab = selectedTab.previous()
+                            true
+                        } else {
+                            false
+                        }
                     }
 
                     KeyEvent.KEYCODE_BUTTON_R1 -> {
-                        selectedTab = selectedTab.next()
-                        true
+                        if (!drawerOpen && selectedMenu == DrawerMenuItem.HOME) {
+                            selectedTab = selectedTab.next()
+                            true
+                        } else {
+                            false
+                        }
                     }
 
                     KeyEvent.KEYCODE_BACK, KeyEvent.KEYCODE_BUTTON_B -> {
-                        if (selectedTab != LauncherTab.HOME) selectedTab = LauncherTab.HOME
+                        when {
+                            drawerOpen -> {
+                                drawerOpen = false
+                                focusEpoch++
+                            }
+                            selectedMenu != DrawerMenuItem.HOME -> selectedMenu = DrawerMenuItem.HOME
+                            selectedTab != LauncherTab.HOME -> selectedTab = LauncherTab.HOME
+                        }
                         true
                     }
 
@@ -200,47 +243,92 @@ fun LauncherRoot(
             StatusBar(
                 selectedTab = selectedTab,
                 onTabSelected = { selectedTab = it },
+                onOpenDrawer = { drawerOpen = true },
+                showTabs = selectedMenu == DrawerMenuItem.HOME,
             )
 
             Box(modifier = Modifier.weight(1f)) {
-                when (selectedTab) {
-                    LauncherTab.HOME -> LauncherGrid(
-                        rows = homeRows(recents, historyGames, historyMessage),
-                        onLaunchApp = ::launch,
-                        onLaunchGame = ::launchGame,
-                        onLoadThumbnail = { path -> retroRepository.loadThumbnail(path) },
-                        onLoadBoxArt = { name -> retroRepository.loadBoxArt(name) },
-                        autoFocusFirstItem = true,
+                when (selectedMenu) {
+                    DrawerMenuItem.HOME -> when (selectedTab) {
+                        LauncherTab.HOME -> LauncherGrid(
+                            rows = homeRows(recents, historyGames, historyMessage),
+                            onLaunchApp = ::launch,
+                            onLaunchGame = ::launchGame,
+                            onLoadThumbnail = { path -> retroRepository.loadThumbnail(path) },
+                            onLoadBoxArt = { name -> retroRepository.loadBoxArt(name) },
+                            autoFocusFirstItem = true,
+                            focusEpoch = focusEpoch,
+                        )
+
+                        LauncherTab.GAMES -> LauncherGameSystems(
+                            games = retroGames,
+                            error = retroError,
+                            loaded = retroLoaded,
+                            available = retroArchAvailable,
+                            hasPlaylistAccess = retroHasPlaylistAccess,
+                            loading = retroLoading,
+                            onLaunchGame = ::launchGame,
+                            onLoadThumbnail = { path -> retroRepository.loadThumbnail(path) },
+                            onLoadBoxArt = { name -> retroRepository.loadBoxArt(name) },
+                            onAction = ::handleGameAction,
+                            autoFocusFirstItem = true,
+                            focusEpoch = focusEpoch,
+                        )
+
+                        LauncherTab.RECENT -> LauncherGrid(
+                            rows = recentRows(recents),
+                            onLaunchApp = ::launch,
+                            autoFocusFirstItem = true,
+                            focusEpoch = focusEpoch,
+                        )
+
+                        LauncherTab.ALL_APPS -> LauncherGrid(
+                            rows = allAppsRows(apps),
+                            onLaunchApp = ::launch,
+                            autoFocusFirstItem = true,
+                            focusEpoch = focusEpoch,
+                        )
+                    }
+
+                    DrawerMenuItem.SETUP -> EmptyScreen(
+                        title = "SETUP",
+                        message = "Setup options will appear here",
                     )
 
-                    LauncherTab.GAMES -> LauncherGameSystems(
-                        games = retroGames,
-                        error = retroError,
-                        loaded = retroLoaded,
-                        available = retroArchAvailable,
-                        hasPlaylistAccess = retroHasPlaylistAccess,
-                        loading = retroLoading,
-                        onLaunchGame = ::launchGame,
-                        onLoadThumbnail = { path -> retroRepository.loadThumbnail(path) },
-                        onLoadBoxArt = { name -> retroRepository.loadBoxArt(name) },
-                        onAction = ::handleGameAction,
-                        autoFocusFirstItem = true,
+                    DrawerMenuItem.SCREENSHOTS -> EmptyScreen(
+                        title = "SCREENSHOTS",
+                        message = "Your screenshots will appear here",
                     )
 
-                    LauncherTab.RECENT -> LauncherGrid(
-                        rows = recentRows(recents),
-                        onLaunchApp = ::launch,
+                    DrawerMenuItem.STEAM -> EmptyScreen(
+                        title = "STEAM",
+                        message = if (steamLinkMissing) {
+                            "Steam Link is not installed - install it to stream from your PC"
+                        } else {
+                            "Opening Steam Link..."
+                        },
                     )
 
-                    LauncherTab.ALL_APPS -> LauncherGrid(
-                        rows = allAppsRows(apps),
-                        onLaunchApp = ::launch,
+                    DrawerMenuItem.SETTINGS -> EmptyScreen(
+                        title = "SETTINGS",
+                        message = "Settings will appear here",
                     )
                 }
             }
 
             HintBar()
         }
+
+        DrawerOverlay(
+            visible = drawerOpen,
+            selectedItem = selectedMenu,
+            onItemSelected = ::handleMenu,
+            onDismiss = {
+                drawerOpen = false
+                focusEpoch++
+            },
+            modifier = Modifier.fillMaxSize(),
+        )
     }
 }
 
@@ -257,6 +345,7 @@ private fun HintBar() {
         Hint("D-PAD", "NAVIGATE")
         Hint("ENTER", "LAUNCH")
         Hint("KEYS", "SEARCH")
+        Hint("MENU / Y", "DRAWER")
         Hint("BACK", "HOME")
         Hint("L1 / R1", "SWITCH TAB")
     }

@@ -16,6 +16,7 @@ import android.telephony.SignalStrength
 import android.telephony.TelephonyManager
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.focusable
 import androidx.compose.foundation.layout.Arrangement
@@ -53,6 +54,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.consolelauncher.ui.theme.ConsoleAccent
 import com.example.consolelauncher.ui.theme.ConsoleOnAccent
+import com.example.consolelauncher.ui.theme.ConsoleStroke
 import com.example.consolelauncher.ui.theme.ConsoleSurface
 import com.example.consolelauncher.ui.theme.ConsoleTextPrimary
 import com.example.consolelauncher.ui.theme.ConsoleTextSecondary
@@ -161,10 +163,32 @@ private fun TabChip(
     selected: Boolean,
     onClick: () -> Unit,
 ) {
+    var focused by remember { mutableStateOf(false) }
+    val shape = RoundedCornerShape(8.dp)
+
     Box(
         modifier = Modifier
-            .clip(RoundedCornerShape(8.dp))
-            .background(if (selected) ConsoleAccent else ConsoleSurface)
+            .onFocusChanged { focused = it.isFocused }
+            .focusable()
+            .clip(shape)
+            .background(
+                when {
+                    selected -> ConsoleAccent
+                    focused -> ConsoleAccent.copy(alpha = 0.16f)
+                    else -> ConsoleSurface
+                },
+            )
+            .border(
+                width = if (focused) 2.dp else 1.dp,
+                // On the selected chip the accent border would vanish against the accent
+                // fill, so the focus ring there uses the light text color instead.
+                color = when {
+                    focused && selected -> ConsoleTextPrimary
+                    focused -> ConsoleAccent
+                    else -> ConsoleStroke
+                },
+                shape = shape,
+            )
             .clickable(onClick = onClick)
             .padding(horizontal = 14.dp, vertical = 7.dp),
     ) {
@@ -173,7 +197,11 @@ private fun TabChip(
             style = MaterialTheme.typography.labelMedium,
             fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
             letterSpacing = 1.sp,
-            color = if (selected) ConsoleOnAccent else ConsoleTextSecondary,
+            color = when {
+                selected -> ConsoleOnAccent
+                focused -> ConsoleAccent
+                else -> ConsoleTextSecondary
+            },
         )
     }
 }

@@ -55,6 +55,21 @@ class RetroArchPlaylistAccess(context: Context) {
 
         /** File names under which RetroArch stores its content history playlist. */
         private val HISTORY_PLAYLIST_FILES = setOf(HISTORY_PLAYLIST_FILE, "history.lpl")
+
+        /**
+         * The built-in playlist that holds the games the user starred as favourites. RetroArch
+         * writes it with the US spelling and the `content_` prefix (see `FILE_PATH_CONTENT_
+         * FAVORITES` in its source), older or renamed variants are matched too.
+         */
+        private const val FAVOURITES_PLAYLIST_FILE = "content_favorites.lpl"
+
+        /** File names under which RetroArch stores its favourites playlist. */
+        private val FAVOURITES_PLAYLIST_FILES = setOf(
+            FAVOURITES_PLAYLIST_FILE,
+            "content_favourites.lpl",
+            "favorites.lpl",
+            "favourites.lpl",
+        )
     }
 
     /**
@@ -174,20 +189,30 @@ class RetroArchPlaylistAccess(context: Context) {
      */
     suspend fun findHistoryPlaylist(): Uri? = scanPlaylists().history
 
+    /**
+     * Document URI of RetroArch's built-in favourites playlist (`content_favorites.lpl`),
+     * which lists the games the user starred in RetroArch. Null when the granted tree does not
+     * contain it.
+     */
+    suspend fun findFavouritesPlaylist(): Uri? = scanPlaylists().favourites
+
     private suspend fun scanPlaylists(): PlaylistScan = withContext(Dispatchers.IO) {
-        val empty = PlaylistScan(emptyList(), null)
+        val empty = PlaylistScan(emptyList(), null, null)
         val treeUri = getPlaylistsUri() ?: return@withContext empty
         val rootDocumentId = runCatching { DocumentsContract.getTreeDocumentId(treeUri) }.getOrNull()
             ?: return@withContext empty
 
         val playlists = mutableListOf<Uri>()
         val histories = mutableListOf<Pair<String, Uri>>()
-        collectPlaylists(treeUri, rootDocumentId, 0, playlists, histories)
+        val favourites = mutableListOf<Pair<String, Uri>>()
+        collectPlaylists(treeUri, rootDocumentId, 0, playlists, histories, favourites)
         Log.d(TAG, "Found ${playlists.size} playlist files")
         PlaylistScan(
             playlists = playlists,
             history = histories.firstOrNull { it.first == HISTORY_PLAYLIST_FILE }?.second
                 ?: histories.firstOrNull()?.second,
+            favourites = favourites.firstOrNull { it.first == FAVOURITES_PLAYLIST_FILE }?.second
+                ?: favourites.firstOrNull()?.second,
         )
     }
 
@@ -197,6 +222,7 @@ class RetroArchPlaylistAccess(context: Context) {
         depth: Int,
         result: MutableList<Uri>,
         histories: MutableList<Pair<String, Uri>>,
+        favourites: MutableList<Pair<String, Uri>>,
     ) {
         if (depth > MAX_PLAYLIST_DEPTH) return
 
@@ -232,7 +258,7 @@ class RetroArchPlaylistAccess(context: Context) {
                     when {
                         mime == DocumentsContract.Document.MIME_TYPE_DIR -> {
                             if (name.lowercase() !in SKIPPED_FOLDERS) {
-                                collectPlaylists(treeUri, id, depth + 1, result, histories)
+                                collectPlaylists(treeUri, id, depth + 1, result, histories, favourites)
                             }
                         }
 
@@ -243,6 +269,16 @@ class RetroArchPlaylistAccess(context: Context) {
                                 name.lowercase() to DocumentsContract.buildDocumentUriUsingTree(treeUri, id),
                             )
                             Log.d(TAG, "Found history playlist: $name")
+                        }
+
+                        name.lowercase() in FAVOURITES_PLAYLIST_FILES -> {
+                            // Same for the built-in favourites: a home screen section, not a
+                            // system playlist. The plain variants do not carry the `content_`
+                            // prefix, so they have to be caught before the generic rule below.
+                            favourites.add(
+                                name.lowercase() to DocumentsContract.buildDocumentUriUsingTree(treeUri, id),
+                            )
+                            Log.d(TAG, "Found favourites playlist: $name")
                         }
 
                         name.endsWith(".lpl", ignoreCase = true) &&
@@ -535,4 +571,6 @@ private data class PlaylistScan(
     val playlists: List<Uri>,
     /** Content history playlist (`content_history.lpl`), newest run first. */
     val history: Uri?,
+    /** Built-in favourites playlist (`content_favorites.lpl`), in the order they were starred. */
+    val favourites: Uri?,
 )

@@ -329,7 +329,42 @@ private fun SettingsNameField(
         if (keyboardUp) hideKeyboard() else showKeyboard()
     }
 
-    Box(modifier) {
+    Box(
+        modifier = modifier
+            .onFocusChanged { state ->
+                // Track the subtree, not the box itself: D-pad focus may sit either on the
+                // invisible tap overlay or inside the text field, and both count as "the
+                // name field is focused" for the highlight.
+                focused = state.hasFocus
+                if (!state.hasFocus) {
+                    interactive = false
+                    hideKeyboard()
+                }
+            }
+            // Key handling lives here instead of on the text field itself so that typing
+            // works no matter which child node (overlay or text field) holds the focus.
+            .onPreviewKeyEvent { event ->
+                if (event.nativeKeyEvent.action != KeyEvent.ACTION_DOWN) {
+                    return@onPreviewKeyEvent false
+                }
+                when (event.nativeKeyEvent.keyCode) {
+                    // Keep the D-pad moving up/down through the settings rows.
+                    KeyEvent.KEYCODE_DPAD_DOWN -> focusManager.moveFocus(FocusDirection.Down)
+                    KeyEvent.KEYCODE_DPAD_UP -> focusManager.moveFocus(FocusDirection.Up)
+                    else -> {
+                        val ch = event.nativeKeyEvent.getUnicodeChar()
+                        if (ch >= ' '.code) {
+                            if (!interactive) clickFocus.requestFocus()
+                            interactive = true
+                            onValueChange((value + ch.toChar()).take(NAME_MAX_LENGTH))
+                            true
+                        } else {
+                            false
+                        }
+                    }
+                }
+            },
+    ) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -340,13 +375,6 @@ private fun SettingsNameField(
                     color = if (focused) ConsoleAccent else ConsoleStroke,
                     shape = shape,
                 )
-                .onFocusChanged { state ->
-                    focused = state.isFocused
-                    if (!state.isFocused) {
-                        interactive = false
-                        hideKeyboard()
-                    }
-                }
                 .padding(horizontal = 16.dp, vertical = 10.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
@@ -372,29 +400,7 @@ private fun SettingsNameField(
                 }),
                 modifier = Modifier
                     .weight(1f)
-                    .focusRequester(clickFocus)
-                    .onPreviewKeyEvent { event ->
-                        if (event.nativeKeyEvent.action != KeyEvent.ACTION_DOWN) {
-                            return@onPreviewKeyEvent false
-                        }
-                        when (event.nativeKeyEvent.keyCode) {
-                            // Keep the D-pad moving up/down through the settings rows.
-                            KeyEvent.KEYCODE_DPAD_DOWN -> focusManager.moveFocus(FocusDirection.Down)
-                            KeyEvent.KEYCODE_DPAD_UP -> focusManager.moveFocus(FocusDirection.Up)
-                            else -> {
-                                val ch = event.nativeKeyEvent.getUnicodeChar()
-                                if (ch >= ' '.code) {
-                                    if (!interactive) {
-                                        interactive = true
-                                        onValueChange((value + ch.toChar()).take(NAME_MAX_LENGTH))
-                                    }
-                                    true
-                                } else {
-                                    false
-                                }
-                            }
-                        }
-                    },
+                    .focusRequester(clickFocus),
                 decorationBox = { innerTextField ->
                     if (value.isBlank()) {
                         Text(

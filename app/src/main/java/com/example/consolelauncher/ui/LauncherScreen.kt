@@ -66,9 +66,9 @@ import com.example.consolelauncher.ui.theme.ConsoleBackground
 import com.example.consolelauncher.ui.theme.ConsoleTextSecondary
 
 /**
- * The launcher home screen. It shows recently launched apps and the RetroArch play history as
- * console style tiles, plus all games that RetroArch knows about, and can be driven with a touch
- * screen, a D-pad or the arrow keys.
+ * The launcher home screen. It shows recently launched apps plus the RetroArch play history and
+ * favourites as console style tiles, and all games that RetroArch knows about, and can be driven
+ * with a touch screen, a D-pad or the arrow keys.
  */
 @Composable
 fun LauncherRoot(
@@ -99,6 +99,7 @@ fun LauncherRoot(
 
     var retroGames by remember { mutableStateOf<List<RetroGameEntry>>(emptyList()) }
     var historyGames by remember { mutableStateOf<List<RetroGameEntry>>(emptyList()) }
+    var favouriteGames by remember { mutableStateOf<List<RetroGameEntry>>(emptyList()) }
     var retroArchAvailable by remember { mutableStateOf(false) }
     var retroHasPlaylistAccess by remember { mutableStateOf(false) }
     var retroHasArtworkAccess by remember { mutableStateOf(false) }
@@ -134,10 +135,12 @@ fun LauncherRoot(
             // scanning a second artwork folder per playlist makes the load noticeably slower.
             retroGames = retroRepository.loadRetroGames(resolveSnaps = ambientMode)
             historyGames = retroRepository.loadHistory(resolveSnaps = ambientMode)
+            favouriteGames = retroRepository.loadFavourites(resolveSnaps = ambientMode)
             retroLoading = false
         } else {
             retroGames = emptyList()
             historyGames = emptyList()
+            favouriteGames = emptyList()
         }
         retroLoaded = true
     }
@@ -225,12 +228,19 @@ fun LauncherRoot(
         }
     }
 
-    // Shown in place of the home history while it cannot be loaded, null once there is real
-    // content to display.
+    // Shown in place of the home history / favourites while they cannot be loaded, null once
+    // there is real content to display.
     val historyMessage = when {
         !retroLoaded -> "Reading RetroArch history..."
         !retroArchAvailable -> "RetroArch is not installed - your last played games will show up here"
         !retroHasPlaylistAccess -> "Grant playlist access in the GAMES tab to see your history here"
+        else -> null
+    }
+
+    val favouriteMessage = when {
+        !retroLoaded -> "Reading RetroArch favourites..."
+        !retroArchAvailable -> "RetroArch is not installed - your favourite games will show up here"
+        !retroHasPlaylistAccess -> "Grant playlist access in the GAMES tab to see your favourites here"
         else -> null
     }
 
@@ -359,7 +369,13 @@ fun LauncherRoot(
                 when (selectedMenu) {
                     DrawerMenuItem.HOME -> when (selectedTab) {
                         LauncherTab.HOME -> LauncherGrid(
-                            rows = homeRows(recents, historyGames, historyMessage),
+                            rows = homeRows(
+                                recents = recents,
+                                historyGames = historyGames,
+                                historyMessage = historyMessage,
+                                favouriteGames = favouriteGames,
+                                favouriteMessage = favouriteMessage,
+                            ),
                             onLaunchApp = ::launch,
                             onLaunchGame = ::launchGame,
                             onLoadThumbnail = { path -> retroRepository.loadThumbnail(path) },
@@ -493,6 +509,8 @@ private fun homeRows(
     recents: List<AppEntry>,
     historyGames: List<RetroGameEntry>,
     historyMessage: String?,
+    favouriteGames: List<RetroGameEntry>,
+    favouriteMessage: String?,
 ): List<LauncherRow> = buildList {
     add(LauncherRow.Section("CONTINUE"))
     if (recents.isEmpty()) {
@@ -505,6 +523,16 @@ private fun homeRows(
         add(LauncherRow.Message(historyMessage ?: "No games played yet - start one from the GAMES tab"))
     } else {
         add(LauncherRow.GameRow("home_history", historyGames, verticalCards = true))
+    }
+    add(LauncherRow.Section("FAVOURITES"))
+    if (favouriteGames.isEmpty()) {
+        add(
+            LauncherRow.Message(
+                favouriteMessage ?: "No favourites yet - star games in RetroArch and they will show up here",
+            ),
+        )
+    } else {
+        add(LauncherRow.GameRow("home_favourites", favouriteGames, verticalCards = true))
     }
 }
 

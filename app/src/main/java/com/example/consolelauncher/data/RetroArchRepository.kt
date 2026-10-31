@@ -74,6 +74,15 @@ class RetroArchRepository(context: Context) {
         /** Games shown in the home screen history section. */
         private const val HISTORY_LIMIT = 10
 
+        /** Playlist name of RetroArch's built-in favourites playlist. */
+        private const val FAVOURITES_PLAYLIST = "content_favorites"
+
+        /** System folder names of the favourites playlist itself, usually absent from thumbnails. */
+        private val FAVOURITES_SYSTEM_FOLDERS = listOf(FAVOURITES_PLAYLIST, "favourites", "favorites")
+
+        /** Games shown in the home screen favourites section. */
+        private const val FAVOURITES_LIMIT = 10
+
         /**
          * Width in dp of the largest artwork slot (the history tile). Decoded images are
          * rescaled to this size in real pixels once, so the GPU draws them ~1:1.
@@ -195,6 +204,47 @@ class RetroArchRepository(context: Context) {
         }
         Log.d(TAG, "Loaded ${history.size} history entries (${uniqueHistory.size} unique)")
         uniqueHistory.take(HISTORY_LIMIT)
+    }
+
+    /**
+     * Loads RetroArch's built-in favourites (`content_favorites.lpl`): the games the user starred
+     * in RetroArch, in the order they were starred. Entries are shown with the title screen
+     * artwork of their system when available, falling back to the box art, exactly like the
+     * history. Returns an empty list if RetroArch is not installed, no playlist access was
+     * granted or nothing was starred yet.
+     */
+    suspend fun loadFavourites(resolveSnaps: Boolean = false): List<RetroGameEntry> = withContext(Dispatchers.IO) {
+        if (resolvePackage() == null) {
+            Log.d(TAG, "RetroArch not installed")
+            return@withContext emptyList()
+        }
+        if (!playlistAccess.hasAccess()) {
+            Log.d(TAG, "No SAF access granted to the RetroArch playlists folder")
+            return@withContext emptyList()
+        }
+
+        val favouritesUri = playlistAccess.findFavouritesPlaylist()
+        if (favouritesUri == null) {
+            Log.d(TAG, "No favourites playlist found in the granted folder")
+            return@withContext emptyList()
+        }
+
+        val favourites = parsePlaylistFile(
+            playlistUri = favouritesUri,
+            playlistName = FAVOURITES_PLAYLIST,
+            systemFolders = FAVOURITES_SYSTEM_FOLDERS,
+            artworkFolders = HISTORY_ARTWORK_FOLDERS,
+            scanEverySystemFolder = true,
+            resolveSnaps = resolveSnaps,
+        )
+        // The same game can be starred more than once through different paths, and duplicate ids
+        // would crash the grid keyed by them.
+        val seenPaths = mutableSetOf<String>()
+        val uniqueFavourites = favourites.filter {
+            seenPaths.add(it.romPath)
+        }
+        Log.d(TAG, "Loaded ${favourites.size} favourites (${uniqueFavourites.size} unique)")
+        uniqueFavourites.take(FAVOURITES_LIMIT)
     }
 
     /** Display name of a SAF document, used to name the playlist. */

@@ -467,7 +467,50 @@ private fun GameSearchBar(
         if (keyboardUp) hideKeyboard() else showKeyboard()
     }
 
-    Box(modifier) {
+    Box(
+        modifier = modifier
+            .onFocusChanged { state ->
+                // Track the subtree, not the box itself: D-pad focus may sit either on the
+                // invisible tap overlay or inside the text field, and both count as "the
+                // search bar is focused" for the highlight.
+                focused = state.hasFocus
+                if (!state.hasFocus) {
+                    // Refocusing through the D-pad must not re-trigger the keyboard, so
+                    // the field locks again whenever it loses focus.
+                    interactive = false
+                    hideKeyboard()
+                }
+            }
+            // The key handling lives here instead of on the text field itself so that
+            // typing and D-pad navigation work no matter which child node
+            // (overlay or text field) currently holds the focus.
+            .onPreviewKeyEvent { event ->
+                if (event.nativeKeyEvent.action != KeyEvent.ACTION_DOWN) {
+                    return@onPreviewKeyEvent false
+                }
+                when (event.nativeKeyEvent.keyCode) {
+                    // Single-line fields do not move the focus on D-pad up/down, so
+                    // translate them into focus moves to keep navigating past the bar.
+                    KeyEvent.KEYCODE_DPAD_DOWN -> focusManager.moveFocus(FocusDirection.Down)
+                    KeyEvent.KEYCODE_DPAD_UP -> focusManager.moveFocus(FocusDirection.Up)
+                    else -> {
+                        val ch = event.nativeKeyEvent.getUnicodeChar()
+                        if (ch >= ' '.code) {
+                            // A hardware key press unlocks the read-only field; the first
+                            // character is entered by hand while the field is still
+                            // read-only. Pulling the focus onto the text field makes the
+                            // caret visible as soon as typing starts.
+                            if (!interactive) clickFocus.requestFocus()
+                            interactive = true
+                            onQueryChange((query + ch.toChar()).take(SEARCH_MAX_LENGTH))
+                            true
+                        } else {
+                            false
+                        }
+                    }
+                }
+            },
+    ) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -478,15 +521,6 @@ private fun GameSearchBar(
                     color = if (focused) ConsoleAccent else ConsoleStroke,
                     shape = shape,
                 )
-                .onFocusChanged { state ->
-                    focused = state.isFocused
-                    if (!state.isFocused) {
-                        // Refocusing through the D-pad must not re-trigger the keyboard, so
-                        // the field locks again whenever it loses focus.
-                        interactive = false
-                        hideKeyboard()
-                    }
-                }
                 .padding(horizontal = 16.dp, vertical = 10.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
@@ -509,34 +543,7 @@ private fun GameSearchBar(
                 keyboardActions = KeyboardActions(onDone = { hideKeyboard() }),
                 modifier = Modifier
                     .weight(1f)
-                    .focusRequester(clickFocus)
-                    .onPreviewKeyEvent { event ->
-                        if (event.nativeKeyEvent.action != KeyEvent.ACTION_DOWN) {
-                            return@onPreviewKeyEvent false
-                        }
-                        when (event.nativeKeyEvent.keyCode) {
-                            // Single-line fields do not move the focus on D-pad up/down,
-                            // so translate them into focus moves to keep navigating past
-                            // the search bar.
-                            KeyEvent.KEYCODE_DPAD_DOWN -> focusManager.moveFocus(FocusDirection.Down)
-                            KeyEvent.KEYCODE_DPAD_UP -> focusManager.moveFocus(FocusDirection.Up)
-                            else -> {
-                                val ch = event.nativeKeyEvent.getUnicodeChar()
-                                if (ch >= ' '.code) {
-                                    // A hardware keyboard unlocks the read-only field; the
-                                    // first character is entered by hand while the field is
-                                    // still read-only.
-                                    if (!interactive) {
-                                        interactive = true
-                                        onQueryChange((query + ch.toChar()).take(SEARCH_MAX_LENGTH))
-                                    }
-                                    true
-                                } else {
-                                    false
-                                }
-                            }
-                        }
-                    },
+                    .focusRequester(clickFocus),
                 decorationBox = { innerTextField ->
                     if (query.isBlank()) {
                         Text(

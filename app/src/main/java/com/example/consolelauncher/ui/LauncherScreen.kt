@@ -39,7 +39,10 @@ import com.example.consolelauncher.data.AppRepository
 import com.example.consolelauncher.data.RecentAppsStore
 import com.example.consolelauncher.data.RetroArchRepository
 import com.example.consolelauncher.data.RetroGameEntry
+import com.example.consolelauncher.data.UserProfileStore
 import com.example.consolelauncher.ui.components.LauncherGameSystems
+import com.example.consolelauncher.ui.components.LauncherSettings
+import com.example.consolelauncher.ui.components.SettingsTab
 import com.example.consolelauncher.ui.components.ACTION_CHANGE_PLAYLISTS
 import com.example.consolelauncher.ui.components.ACTION_GRANT_PLAYLISTS
 import com.example.consolelauncher.ui.components.ACTION_REFRESH_GAMES
@@ -51,6 +54,7 @@ import com.example.consolelauncher.ui.components.LauncherRow
 import com.example.consolelauncher.ui.components.LauncherTab
 import com.example.consolelauncher.ui.components.StatusBar
 import com.example.consolelauncher.ui.components.launchSteamLink
+import com.example.consolelauncher.ui.components.cycleSettingsTab
 import com.example.consolelauncher.ui.theme.ConsoleTextSecondary
 
 /**
@@ -67,11 +71,14 @@ fun LauncherRoot(
     val repository = remember { AppRepository(context) }
     val recentStore = remember { RecentAppsStore(context) }
     val retroRepository = remember { RetroArchRepository(context) }
+    val profileStore = remember { UserProfileStore(context) }
     val playlistAccess = remember { retroRepository.getPlaylistAccess() }
 
     var apps by remember { mutableStateOf<List<AppEntry>>(emptyList()) }
     var recents by remember { mutableStateOf<List<AppEntry>>(emptyList()) }
     var selectedTab by remember { mutableStateOf(LauncherTab.HOME) }
+    var selectedSettingsTab by remember { mutableStateOf(SettingsTab.USER) }
+    var savedName by remember { mutableStateOf(profileStore.name()) }
     var selectedMenu by remember { mutableStateOf(DrawerMenuItem.HOME) }
     var drawerOpen by remember { mutableStateOf(false) }
     // Bumped every time the drawer closes so the screen content grabs the D-pad focus back.
@@ -144,6 +151,12 @@ fun LauncherRoot(
         }
     }
 
+    fun saveName(name: String) {
+        profileStore.save(name)
+        // Commit is synchronous, so the trimmed name already round-trips through the store.
+        savedName = profileStore.name()
+    }
+
     fun handleMenu(item: DrawerMenuItem) {
         steamLinkMissing = false
         drawerOpen = false
@@ -200,22 +213,41 @@ fun LauncherRoot(
                         true
                     }
 
-                    // L1 / R1 flip the tabs of the HOME screen while the drawer is closed.
+                    // L1 / R1 flip the tabs of the HOME and SETTINGS screens while the drawer
+                    // is closed.
                     KeyEvent.KEYCODE_BUTTON_L1 -> {
-                        if (!drawerOpen && selectedMenu == DrawerMenuItem.HOME) {
-                            selectedTab = selectedTab.previous()
-                            true
-                        } else {
+                        if (drawerOpen) {
                             false
+                        } else when (selectedMenu) {
+                            DrawerMenuItem.HOME -> {
+                                selectedTab = selectedTab.previous()
+                                true
+                            }
+
+                            DrawerMenuItem.SETTINGS -> {
+                                selectedSettingsTab = cycleSettingsTab(selectedSettingsTab, forward = false)
+                                true
+                            }
+
+                            else -> false
                         }
                     }
 
                     KeyEvent.KEYCODE_BUTTON_R1 -> {
-                        if (!drawerOpen && selectedMenu == DrawerMenuItem.HOME) {
-                            selectedTab = selectedTab.next()
-                            true
-                        } else {
+                        if (drawerOpen) {
                             false
+                        } else when (selectedMenu) {
+                            DrawerMenuItem.HOME -> {
+                                selectedTab = selectedTab.next()
+                                true
+                            }
+
+                            DrawerMenuItem.SETTINGS -> {
+                                selectedSettingsTab = cycleSettingsTab(selectedSettingsTab, forward = true)
+                                true
+                            }
+
+                            else -> false
                         }
                     }
 
@@ -241,10 +273,23 @@ fun LauncherRoot(
                 .safeDrawingPadding(),
         ) {
             StatusBar(
-                selectedTab = selectedTab,
-                onTabSelected = { selectedTab = it },
+                tabTitles = tabsForMenu(selectedMenu),
+                selectedTabTitle = when (selectedMenu) {
+                    DrawerMenuItem.HOME -> selectedTab.title
+                    DrawerMenuItem.SETTINGS -> selectedSettingsTab.title
+                    else -> null
+                },
+                onTabSelected = { title ->
+                    when (selectedMenu) {
+                        DrawerMenuItem.SETTINGS -> {
+                            selectedSettingsTab = SettingsTab.entries.first { it.title == title }
+                        }
+
+                        else -> selectedTab = LauncherTab.entries.first { it.title == title }
+                    }
+                },
                 onOpenDrawer = { drawerOpen = true },
-                showTabs = selectedMenu == DrawerMenuItem.HOME,
+                wordmark = if (savedName.isBlank()) "Hi" else "Hi ${savedName.trim()}",
             )
 
             Box(modifier = Modifier.weight(1f)) {
@@ -309,9 +354,15 @@ fun LauncherRoot(
                         },
                     )
 
-                    DrawerMenuItem.SETTINGS -> EmptyScreen(
-                        title = "SETTINGS",
-                        message = "Settings will appear here",
+                    DrawerMenuItem.SETTINGS -> LauncherSettings(
+                        tab = selectedSettingsTab,
+                        savedName = savedName,
+                        retroArchAvailable = retroArchAvailable,
+                        hasPlaylistAccess = retroHasPlaylistAccess,
+                        onAction = ::handleGameAction,
+                        onSaveName = ::saveName,
+                        autoFocusFirstItem = true,
+                        focusEpoch = focusEpoch,
                     )
                 }
             }
@@ -416,6 +467,13 @@ private fun allAppsRows(apps: List<AppEntry>): List<LauncherRow> = buildList {
 private fun recentsFrom(store: RecentAppsStore, apps: List<AppEntry>): List<AppEntry> {
     val byPackage = apps.associateBy { it.packageName }
     return store.recentPackages().mapNotNull { byPackage[it] }
+}
+
+/** The tab strip the top bar shows for a drawer menu; the other menus have no tabs. */
+private fun tabsForMenu(menu: DrawerMenuItem): List<String> = when (menu) {
+    DrawerMenuItem.HOME -> LauncherTab.entries.map { it.title }
+    DrawerMenuItem.SETTINGS -> SettingsTab.entries.map { it.title }
+    else -> emptyList()
 }
 
 private fun LauncherTab.next(): LauncherTab {

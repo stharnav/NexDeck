@@ -71,14 +71,18 @@ enum class LauncherTab(val title: String) {
 
 /**
  * The console style top bar: drawer toggle, word mark, tab strip and the system status indicators.
+ *
+ * The tab strip is generic: the HOME screen passes its tabs, the SETTINGS screen its own. Passing
+ * no tabs at all renders the plain bar used by the other drawer menus.
  */
 @Composable
 fun StatusBar(
-    selectedTab: LauncherTab,
-    onTabSelected: (LauncherTab) -> Unit,
+    tabTitles: List<String>,
+    selectedTabTitle: String?,
+    onTabSelected: (String) -> Unit,
     onOpenDrawer: () -> Unit = {},
-    showTabs: Boolean = true,
     modifier: Modifier = Modifier,
+    wordmark: String = "CONSOLE LAUNCHER",
 ) {
     Row(
         modifier = modifier
@@ -92,23 +96,22 @@ fun StatusBar(
         Spacer(Modifier.width(12.dp))
 
         Text(
-            text = "CONSOLE LAUNCHER",
+            text = wordmark,
             style = MaterialTheme.typography.titleSmall,
             fontWeight = FontWeight.Bold,
             letterSpacing = 2.sp,
             color = ConsoleTextPrimary,
         )
 
-        // The tab strip belongs to the HOME screen only; other drawer menus have no tabs.
-        if (showTabs) {
+        if (tabTitles.isNotEmpty()) {
             Spacer(Modifier.width(24.dp))
 
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                LauncherTab.entries.forEach { tab ->
+                tabTitles.forEach { title ->
                     TabChip(
-                        tab = tab,
-                        selected = tab == selectedTab,
-                        onClick = { onTabSelected(tab) },
+                        title = title,
+                        selected = title == selectedTabTitle,
+                        onClick = { onTabSelected(title) },
                     )
                 }
             }
@@ -154,7 +157,7 @@ private fun HamburgerButton(onClick: () -> Unit) {
 
 @Composable
 private fun TabChip(
-    tab: LauncherTab,
+    title: String,
     selected: Boolean,
     onClick: () -> Unit,
 ) {
@@ -166,7 +169,7 @@ private fun TabChip(
             .padding(horizontal = 14.dp, vertical = 7.dp),
     ) {
         Text(
-            text = tab.title,
+            text = title,
             style = MaterialTheme.typography.labelMedium,
             fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
             letterSpacing = 1.sp,

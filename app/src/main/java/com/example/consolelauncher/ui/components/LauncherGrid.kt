@@ -201,7 +201,7 @@ fun LauncherGrid(
     }
 }
 
-private inline fun Modifier.thenIf(condition: Boolean, crossinline block: Modifier.() -> Modifier): Modifier =
+internal inline fun Modifier.thenIf(condition: Boolean, crossinline block: Modifier.() -> Modifier): Modifier =
     if (condition) this.block() else this
 
 /**
@@ -415,22 +415,6 @@ fun LauncherGameSystems(
                                 )
                             }
                         }
-                }
-                item(key = "change_folder") {
-                    ActionTile(
-                        label = "CHANGE PLAYLIST FOLDER",
-                        description = "Scan a different RetroArch playlists folder",
-                        onClick = {
-                            onAction(
-                                LauncherRow.Action(
-                                    key = ACTION_CHANGE_PLAYLISTS,
-                                    label = "CHANGE PLAYLIST FOLDER",
-                                    description = "Scan a different RetroArch playlists folder",
-                                ),
-                            )
-                        },
-                        modifier = Modifier.fillMaxWidth(),
-                    )
                 }
             }
         }
@@ -772,7 +756,7 @@ private fun GameSystemRow(
 }
 
 @Composable
-private fun ActionTile(
+internal fun ActionTile(
     label: String,
     description: String,
     onClick: () -> Unit,
@@ -821,7 +805,7 @@ private fun ActionTile(
 }
 
 @Composable
-private fun SectionTitle(title: String) {
+internal fun SectionTitle(title: String) {
     Text(
         text = title,
         style = MaterialTheme.typography.labelLarge,
@@ -848,7 +832,7 @@ private fun LetterTitle(letter: String) {
 }
 
 @Composable
-private fun MessageText(text: String) {
+internal fun MessageText(text: String) {
     Text(
         text = text,
         style = MaterialTheme.typography.bodyMedium,
@@ -864,7 +848,7 @@ private val CARD_HEIGHT = 100.dp
 
 /** Game tiles are taller so the box art is shown as a cover, not as a tiny icon. */
 private val GAME_CARD_HEIGHT = 138.dp
-private val ACTION_CORNER = 12.dp
+internal val ACTION_CORNER = 12.dp
 
 private val GAME_CARD_WIDTH = 220.dp
 

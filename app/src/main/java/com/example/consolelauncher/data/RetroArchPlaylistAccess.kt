@@ -47,6 +47,8 @@ class RetroArchPlaylistAccess(context: Context) {
         /** RetroArch folders that hold the cover art / title screen of a system. */
         internal const val BOXARTS_DIR = "Named_Boxarts"
         internal const val TITLES_DIR = "Named_Titles"
+        /** RetroArch folder with in-game screenshots. Used for the ambient background. */
+        internal const val SNAPS_DIR = "Named_Snaps"
 
         /** The built-in playlist that records the last played games, newest first. */
         private const val HISTORY_PLAYLIST_FILE = "content_history.lpl"

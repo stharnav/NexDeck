@@ -18,6 +18,11 @@ data class RetroGameEntry(
     val thumbnailPath: String?,
     /** SAF document URI of the cover art in `thumbnails/<system>/Named_Boxarts`, if available. */
     val boxArtUri: String?,
+    /**
+     * SAF document URI of the in-game screenshot in `thumbnails/<system>/Named_Snaps`, used as
+     * the ambient background when the game is focused. Only resolved with ambient mode on.
+     */
+    val snapUri: String? = null,
     /** RetroArch variant that owns the game. */
     val launchPackage: String,
     val launchIntent: Intent,

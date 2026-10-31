@@ -7,6 +7,7 @@ import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.net.Uri
 import android.util.Log
+import android.util.LruCache
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
 import kotlinx.coroutines.Dispatchers
@@ -30,6 +31,9 @@ class RetroArchRepository(context: Context) {
     private val missingThumbnails = ConcurrentHashMap.newKeySet<String>()
     private val boxArtCache = ConcurrentHashMap<String, ImageBitmap>()
     private val missingBoxArt = ConcurrentHashMap.newKeySet<String>()
+    /** Decoded ambient backgrounds, small LRU so hovering through a playlist cannot OOM. */
+    private val snapCache = LruCache<String, ImageBitmap>(3)
+    private val missingSnaps = ConcurrentHashMap.newKeySet<String>()
     private val playlistAccess = RetroArchPlaylistAccess(appContext)
 
     @Volatile
@@ -115,7 +119,7 @@ class RetroArchRepository(context: Context) {
      * Loads all games from all `.lpl` playlists, grouped and sorted for display.
      * Returns an empty list if RetroArch is not installed or no playlist access was granted.
      */
-    suspend fun loadRetroGames(): List<RetroGameEntry> = withContext(Dispatchers.IO) {
+    suspend fun loadRetroGames(resolveSnaps: Boolean = false): List<RetroGameEntry> = withContext(Dispatchers.IO) {
         if (resolvePackage() == null) {
             Log.d(TAG, "RetroArch not installed")
             return@withContext emptyList()
@@ -137,7 +141,7 @@ class RetroArchRepository(context: Context) {
                 ?.removeSuffix(".lpl")
                 ?.takeIf { it.isNotBlank() }
                 ?: continue
-            allGames.addAll(parsePlaylistFile(playlistUri, playlistName))
+            allGames.addAll(parsePlaylistFile(playlistUri, playlistName, resolveSnaps = resolveSnaps))
         }
 
         // The same game can be in several playlists (favourites, history, ...); keep the first.
@@ -158,7 +162,7 @@ class RetroArchRepository(context: Context) {
      * Returns an empty list if RetroArch is not installed, no playlist access was granted or
      * nothing was played yet.
      */
-    suspend fun loadHistory(): List<RetroGameEntry> = withContext(Dispatchers.IO) {
+    suspend fun loadHistory(resolveSnaps: Boolean = false): List<RetroGameEntry> = withContext(Dispatchers.IO) {
         if (resolvePackage() == null) {
             Log.d(TAG, "RetroArch not installed")
             return@withContext emptyList()
@@ -180,6 +184,7 @@ class RetroArchRepository(context: Context) {
             systemFolders = HISTORY_SYSTEM_FOLDERS,
             artworkFolders = HISTORY_ARTWORK_FOLDERS,
             scanEverySystemFolder = true,
+            resolveSnaps = resolveSnaps,
         )
         // The history can hold the same ROM path twice (a game launched from within RetroArch is
         // recorded again when it is launched through the launcher). RetroArch keeps the newest run
@@ -221,6 +226,7 @@ class RetroArchRepository(context: Context) {
         systemFolders: List<String> = listOf(playlistName),
         artworkFolders: List<String> = listOf(RetroArchPlaylistAccess.BOXARTS_DIR),
         scanEverySystemFolder: Boolean = false,
+        resolveSnaps: Boolean = false,
     ): List<RetroGameEntry> {
         val jsonText = playlistAccess.readPlaylistFile(playlistUri) ?: return emptyList()
         return try {
@@ -270,6 +276,17 @@ class RetroArchRepository(context: Context) {
                     scanEverySystemFolder = scanEverySystemFolder,
                 )
             }
+            // In-game screenshots (`Named_Snaps`) only matter while ambient mode is on; skipping
+            // the extra SAF scan otherwise keeps the playlist load fast.
+            val snapsBySystem = if (resolveSnaps) {
+                playlistAccess.listArtworkPerSystem(
+                    systemFolders + systems,
+                    RetroArchPlaylistAccess.SNAPS_DIR,
+                    scanEverySystemFolder = scanEverySystemFolder,
+                )
+            } else {
+                emptyMap()
+            }
             val games = mutableListOf<RetroGameEntry>()
 
             for (raw in rawItems) {
@@ -280,6 +297,16 @@ class RetroArchRepository(context: Context) {
 
                 val launchIntent = buildLaunchIntent(raw.romPath, raw.corePath, launchPackage) ?: continue
                 val boxArtUri = boxArtFor(artBySystem, raw, systemFolders, artworkFolders)
+                val snapUri = if (resolveSnaps) {
+                    boxArtFor(
+                        mapOf(RetroArchPlaylistAccess.SNAPS_DIR to snapsBySystem),
+                        raw,
+                        systemFolders,
+                        listOf(RetroArchPlaylistAccess.SNAPS_DIR),
+                    )
+                } else {
+                    null
+                }
 
                 games.add(
                     RetroGameEntry(
@@ -293,6 +320,7 @@ class RetroArchRepository(context: Context) {
                         romPath = raw.romPath,
                         thumbnailPath = raw.thumbnailPath,
                         boxArtUri = boxArtUri?.toString(),
+                        snapUri = snapUri?.toString(),
                         launchPackage = launchPackage,
                         launchIntent = launchIntent,
                     ),
@@ -451,6 +479,49 @@ class RetroArchRepository(context: Context) {
 
     private fun decodeBoxArt(uriString: String): ImageBitmap? =
         decodeArtwork { contentResolver.openInputStream(Uri.parse(uriString)) }
+
+    /**
+     * Loads the ambient background of a game, the in-game screenshot that RetroArch keeps in
+     * `thumbnails/<system>/Named_Snaps`. Decoded only as large as the screen's longest edge, and
+     * kept in a tiny LRU so drifting through a long playlist does not grow the heap.
+     */
+    suspend fun loadSnap(uriString: String): ImageBitmap? = withContext(Dispatchers.IO) {
+        snapCache.get(uriString)?.let { return@withContext it }
+        if (uriString in missingSnaps) return@withContext null
+
+        val bitmap = decodeSnap(uriString)
+        if (bitmap != null) {
+            snapCache.put(uriString, bitmap)
+        } else {
+            missingSnaps.add(uriString)
+        }
+        bitmap
+    }
+
+    private fun decodeSnap(uriString: String): ImageBitmap? {
+        val source = try {
+            contentResolver.openInputStream(Uri.parse(uriString))?.use { BitmapFactory.decodeStream(it) }
+        } catch (e: Exception) {
+            Log.d(TAG, "Failed to decode ambient snap $uriString", e)
+            null
+        } ?: return null
+        if (source.width <= 0 || source.height <= 0) return source.asImageBitmap()
+
+        val metrics = appContext.resources.displayMetrics
+        val longestPx = maxOf(metrics.widthPixels, metrics.heightPixels)
+        val longestEdge = maxOf(source.width, source.height)
+        if (longestEdge <= longestPx) return source.asImageBitmap()
+
+        val scale = longestPx.toFloat() / longestEdge
+        val prepared = Bitmap.createScaledBitmap(
+            source,
+            (source.width * scale).roundToInt().coerceAtLeast(1),
+            (source.height * scale).roundToInt().coerceAtLeast(1),
+            true,
+        )
+        source.recycle()
+        return prepared.asImageBitmap()
+    }
 
     private fun decodeThumbnail(path: String): ImageBitmap? = when {
         path.startsWith("content://") || path.startsWith("file://") ->

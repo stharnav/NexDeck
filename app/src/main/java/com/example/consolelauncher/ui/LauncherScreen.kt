@@ -4,6 +4,8 @@ import android.content.Intent
 import android.view.KeyEvent
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.Crossfade
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -23,19 +25,24 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.blur
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.consolelauncher.data.AppEntry
 import com.example.consolelauncher.data.AppRepository
+import com.example.consolelauncher.data.LauncherSettingsStore
 import com.example.consolelauncher.data.RecentAppsStore
 import com.example.consolelauncher.data.RetroArchRepository
 import com.example.consolelauncher.data.RetroGameEntry
@@ -55,6 +62,7 @@ import com.example.consolelauncher.ui.components.LauncherTab
 import com.example.consolelauncher.ui.components.StatusBar
 import com.example.consolelauncher.ui.components.launchSteamLink
 import com.example.consolelauncher.ui.components.cycleSettingsTab
+import com.example.consolelauncher.ui.theme.ConsoleBackground
 import com.example.consolelauncher.ui.theme.ConsoleTextSecondary
 
 /**
@@ -72,6 +80,7 @@ fun LauncherRoot(
     val recentStore = remember { RecentAppsStore(context) }
     val retroRepository = remember { RetroArchRepository(context) }
     val profileStore = remember { UserProfileStore(context) }
+    val settingsStore = remember { LauncherSettingsStore(context) }
     val playlistAccess = remember { retroRepository.getPlaylistAccess() }
 
     var apps by remember { mutableStateOf<List<AppEntry>>(emptyList()) }
@@ -79,6 +88,9 @@ fun LauncherRoot(
     var selectedTab by remember { mutableStateOf(LauncherTab.HOME) }
     var selectedSettingsTab by remember { mutableStateOf(SettingsTab.USER) }
     var savedName by remember { mutableStateOf(profileStore.name()) }
+    var ambientMode by remember { mutableStateOf(settingsStore.ambientMode()) }
+    /** Last game the D-pad (or a tap) landed on, for the ambient mode background. */
+    var hoveredGame by remember { mutableStateOf<RetroGameEntry?>(null) }
     var selectedMenu by remember { mutableStateOf(DrawerMenuItem.HOME) }
     var drawerOpen by remember { mutableStateOf(false) }
     // Bumped every time the drawer closes so the screen content grabs the D-pad focus back.
@@ -110,7 +122,7 @@ fun LauncherRoot(
         recents = recentsFrom(recentStore, loaded)
     }
 
-    LaunchedEffect(refreshKey, retroRevision) {
+    LaunchedEffect(refreshKey, retroRevision, ambientMode) {
         retroRepository.refresh()
         retroArchAvailable = retroRepository.isAvailable()
         retroHasPlaylistAccess = retroRepository.hasPlaylistAccess()
@@ -118,14 +130,37 @@ fun LauncherRoot(
 
         if (retroArchAvailable && retroHasPlaylistAccess) {
             retroLoading = true
-            retroGames = retroRepository.loadRetroGames()
-            historyGames = retroRepository.loadHistory()
+            // Snaps (ambient backgrounds) are only resolved while ambient mode is active, since
+            // scanning a second artwork folder per playlist makes the load noticeably slower.
+            retroGames = retroRepository.loadRetroGames(resolveSnaps = ambientMode)
+            historyGames = retroRepository.loadHistory(resolveSnaps = ambientMode)
             retroLoading = false
         } else {
             retroGames = emptyList()
             historyGames = emptyList()
         }
         retroLoaded = true
+    }
+
+    // A different tab or screen shows different games; forget the hovered one so its snap does
+    // not linger as the ambient background.
+    LaunchedEffect(selectedMenu, selectedTab) {
+        hoveredGame = null
+    }
+
+    // The ambient background: the Named_Snaps screenshot of the focused game, only while
+    // ambient mode is on. produceState cancels a stale load when the hover or the switch
+    // changes, so a slow decode can no longer overwrite a newer background.
+    val ambientSnap by produceState<ImageBitmap?>(
+        initialValue = null,
+        hoveredGame,
+        ambientMode,
+    ) {
+        value = if (!ambientMode) {
+            null
+        } else {
+            hoveredGame?.snapUri?.let { retroRepository.loadSnap(it) }
+        }
     }
 
     fun launch(entry: AppEntry) {
@@ -155,6 +190,12 @@ fun LauncherRoot(
         profileStore.save(name)
         // Commit is synchronous, so the trimmed name already round-trips through the store.
         savedName = profileStore.name()
+    }
+
+    fun toggleAmbientMode(enabled: Boolean) {
+        settingsStore.setAmbientMode(enabled)
+        // Commit is synchronous, so the flag already round-trips through the store.
+        ambientMode = enabled
     }
 
     fun handleMenu(item: DrawerMenuItem) {
@@ -267,6 +308,28 @@ fun LauncherRoot(
                 }
             },
     ) {
+        Crossfade(targetState = ambientSnap, label = "ambientBackground") { snap ->
+            if (snap != null) {
+                Box(modifier = Modifier.fillMaxSize()) {
+                    // The in-game screenshot fills the screen; a dim scrim keeps the launcher
+                    // tiles readable on top of it. The blur only renders on Android 12+.
+                    Image(
+                        bitmap = snap,
+                        contentDescription = null,
+                        contentScale = ContentScale.Crop,
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .blur(40.dp),
+                    )
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .background(ConsoleBackground.copy(alpha = 0.72f)),
+                    )
+                }
+            }
+        }
+
         Column(
             modifier = Modifier
                 .fillMaxSize()
@@ -301,6 +364,7 @@ fun LauncherRoot(
                             onLaunchGame = ::launchGame,
                             onLoadThumbnail = { path -> retroRepository.loadThumbnail(path) },
                             onLoadBoxArt = { name -> retroRepository.loadBoxArt(name) },
+                            onGameHover = { hoveredGame = it },
                             autoFocusFirstItem = true,
                             focusEpoch = focusEpoch,
                         )
@@ -315,6 +379,7 @@ fun LauncherRoot(
                             onLaunchGame = ::launchGame,
                             onLoadThumbnail = { path -> retroRepository.loadThumbnail(path) },
                             onLoadBoxArt = { name -> retroRepository.loadBoxArt(name) },
+                            onGameHover = { hoveredGame = it },
                             onAction = ::handleGameAction,
                             autoFocusFirstItem = true,
                             focusEpoch = focusEpoch,
@@ -359,6 +424,8 @@ fun LauncherRoot(
                         savedName = savedName,
                         retroArchAvailable = retroArchAvailable,
                         hasPlaylistAccess = retroHasPlaylistAccess,
+                        ambientModeEnabled = ambientMode,
+                        onToggleAmbientMode = ::toggleAmbientMode,
                         onAction = ::handleGameAction,
                         onSaveName = ::saveName,
                         autoFocusFirstItem = true,

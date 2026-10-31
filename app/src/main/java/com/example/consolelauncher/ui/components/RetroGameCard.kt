@@ -65,6 +65,8 @@ fun RetroGameCard(
     modifier: Modifier = Modifier,
     thumbnailLoader: suspend (String) -> ImageBitmap? = { null },
     boxArtLoader: suspend (String) -> ImageBitmap? = { null },
+    /** Called each time the card gains focus, so the screen can show the game's snap. */
+    onFocused: (RetroGameEntry) -> Unit = {},
     vertical: Boolean = false,
 ) {
     var focused by remember { mutableStateOf(false) }
@@ -102,7 +104,10 @@ fun RetroGameCard(
             color = if (focused) ConsoleAccent else ConsoleStroke,
             shape = RoundedCornerShape(CARD_CORNER),
         )
-        .onFocusChanged { focused = it.isFocused }
+        .onFocusChanged { state ->
+            focused = state.isFocused
+            if (state.isFocused) onFocused(entry)
+        }
         .focusable()
         .onKeyEvent { event ->
             if (event.nativeKeyEvent.action == android.view.KeyEvent.ACTION_DOWN && event.isSelectKey()) {

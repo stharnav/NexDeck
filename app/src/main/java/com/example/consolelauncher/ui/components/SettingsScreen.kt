@@ -7,6 +7,7 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -15,7 +16,9 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
@@ -31,15 +34,18 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.scale
 import androidx.compose.ui.focus.FocusDirection
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.input.key.onKeyEvent
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
@@ -74,7 +80,7 @@ internal fun cycleSettingsTab(from: SettingsTab, forward: Boolean): SettingsTab 
 /**
  * The SETTINGS screen: the same console look as the home tabs, one section per tab. USER asks
  * for and saves the player's display name, RETROARCH keeps the playlist folder controls that
- * used to sit at the bottom of the GAMES tab.
+ * used to sit at the bottom of the GAMES tab plus the ambient mode switch.
  */
 @Composable
 fun LauncherSettings(
@@ -82,6 +88,8 @@ fun LauncherSettings(
     savedName: String,
     retroArchAvailable: Boolean,
     hasPlaylistAccess: Boolean,
+    ambientModeEnabled: Boolean,
+    onToggleAmbientMode: (Boolean) -> Unit,
     onAction: (LauncherRow.Action) -> Unit,
     onSaveName: (String) -> Unit,
     autoFocusFirstItem: Boolean = false,
@@ -181,9 +189,106 @@ fun LauncherSettings(
                                 .thenIf(autoFocusFirstItem) { focusRequester(firstItemRequester) },
                         )
                     }
+                    item(key = "retro_ambient") {
+                        SettingsToggleTile(
+                            label = "AMBIENT MODE",
+                            description = "Light up the room while a game runs (feature coming soon)",
+                            checked = ambientModeEnabled,
+                            onToggle = onToggleAmbientMode,
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                    }
                 }
             }
         }
+    }
+}
+
+/**
+ * A rows style switch tile: label and description on the left, a console colored pill switch on
+ * the right. Enter or the gamepad A button (and a tap) flips the state.
+ */
+@Composable
+private fun SettingsToggleTile(
+    label: String,
+    description: String,
+    checked: Boolean,
+    onToggle: (Boolean) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    var focused by remember { mutableStateOf(false) }
+    val shape = RoundedCornerShape(ACTION_CORNER)
+
+    Row(
+        modifier = modifier
+            .scale(if (focused) 1.01f else 1f)
+            .clip(shape)
+            .background(if (focused) ConsoleAccent.copy(alpha = 0.18f) else ConsoleSurface)
+            .border(
+                width = if (focused) 2.dp else 1.dp,
+                color = if (focused) ConsoleAccent else ConsoleStroke,
+                shape = shape,
+            )
+            .onFocusChanged { focused = it.isFocused }
+            .toggleable(
+                value = checked,
+                role = Role.Switch,
+                onValueChange = onToggle,
+            )
+            .onKeyEvent { event ->
+                if (event.nativeKeyEvent.action == KeyEvent.ACTION_DOWN && event.isSelectKey()) {
+                    onToggle(!checked)
+                    true
+                } else {
+                    false
+                }
+            }
+            .padding(horizontal = 16.dp, vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(Modifier.weight(1f)) {
+            Text(
+                text = label,
+                style = MaterialTheme.typography.labelLarge,
+                fontWeight = FontWeight.Bold,
+                letterSpacing = 1.sp,
+                color = if (focused) ConsoleAccent else ConsoleTextPrimary,
+            )
+            Spacer(Modifier.height(2.dp))
+            Text(
+                text = description,
+                style = MaterialTheme.typography.bodySmall,
+                color = ConsoleTextSecondary,
+            )
+        }
+        Spacer(Modifier.width(12.dp))
+        SwitchPill(checked = checked, focused = focused)
+    }
+}
+
+/** The small track and thumb that visualize the on/off state of a [SettingsToggleTile]. */
+@Composable
+private fun SwitchPill(checked: Boolean, focused: Boolean) {
+    Box(
+        modifier = Modifier
+            .size(width = 44.dp, height = 24.dp)
+            .clip(RoundedCornerShape(12.dp))
+            .background(
+                when {
+                    checked -> ConsoleAccent
+                    focused -> ConsoleAccent.copy(alpha = 0.3f)
+                    else -> ConsoleStroke
+                },
+            )
+            .padding(3.dp),
+        contentAlignment = if (checked) Alignment.CenterEnd else Alignment.CenterStart,
+    ) {
+        Box(
+            modifier = Modifier
+                .size(18.dp)
+                .clip(RoundedCornerShape(9.dp))
+                .background(if (checked) ConsoleSurface else ConsoleTextSecondary),
+        )
     }
 }
 

@@ -116,6 +116,7 @@ fun LauncherGrid(
     onAction: (LauncherRow.Action) -> Unit = {},
     onLoadThumbnail: suspend (String) -> ImageBitmap? = { null },
     onLoadBoxArt: suspend (String) -> ImageBitmap? = { null },
+    onGameHover: (RetroGameEntry) -> Unit = {},
     autoFocusFirstItem: Boolean = false,
     focusEpoch: Int = 0,
     modifier: Modifier = Modifier,
@@ -183,6 +184,7 @@ fun LauncherGrid(
                     onLaunchGame = onLaunchGame,
                     onLoadThumbnail = onLoadThumbnail,
                     onLoadBoxArt = onLoadBoxArt,
+                    onGameHover = onGameHover,
                     modifier = Modifier.fillMaxWidth(),
                     firstItemRequester = if (
                         autoFocusFirstItem &&
@@ -221,6 +223,7 @@ fun LauncherGameSystems(
     onLaunchGame: (RetroGameEntry) -> Unit = {},
     onLoadThumbnail: suspend (String) -> ImageBitmap? = { null },
     onLoadBoxArt: suspend (String) -> ImageBitmap? = { null },
+    onGameHover: (RetroGameEntry) -> Unit = {},
     onAction: (LauncherRow.Action) -> Unit = {},
     autoFocusFirstItem: Boolean = false,
     focusEpoch: Int = 0,
@@ -411,6 +414,7 @@ fun LauncherGameSystems(
                                     onLaunchGame = onLaunchGame,
                                     onLoadThumbnail = onLoadThumbnail,
                                     onLoadBoxArt = onLoadBoxArt,
+                                    onGameHover = onGameHover,
                                     modifier = Modifier.fillMaxWidth(),
                                 )
                             }
@@ -720,6 +724,7 @@ private fun GameSystemRow(
     onLaunchGame: (RetroGameEntry) -> Unit,
     onLoadThumbnail: suspend (String) -> ImageBitmap?,
     onLoadBoxArt: suspend (String) -> ImageBitmap?,
+    onGameHover: (RetroGameEntry) -> Unit = {},
     modifier: Modifier = Modifier,
     firstItemRequester: FocusRequester? = null,
     cardWidth: Dp = GAME_CARD_WIDTH,
@@ -745,6 +750,7 @@ private fun GameSystemRow(
                 onClick = { onLaunchGame(entry) },
                 thumbnailLoader = onLoadThumbnail,
                 boxArtLoader = onLoadBoxArt,
+                onFocused = onGameHover,
                 vertical = verticalCards,
                 modifier = Modifier
                     .width(cardWidth)

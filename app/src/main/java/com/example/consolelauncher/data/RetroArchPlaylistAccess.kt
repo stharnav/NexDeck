@@ -50,6 +50,12 @@ class RetroArchPlaylistAccess(context: Context) {
         /** RetroArch folder with in-game screenshots. Used for the ambient background. */
         internal const val SNAPS_DIR = "Named_Snaps"
 
+        /**
+         * RetroArch folder holding the screenshots taken while a game ran (the screenshot
+         * hotkey writes them here). Skipped by the playlist scan, read directly for the gallery.
+         */
+        internal const val SCREENSHOTS_DIR = "screenshots"
+
         /** The built-in playlist that records the last played games, newest first. */
         private const val HISTORY_PLAYLIST_FILE = "content_history.lpl"
 
@@ -384,6 +390,73 @@ class RetroArchPlaylistAccess(context: Context) {
             }
         }
         artBySystem
+    }
+
+    /**
+     * Lists the image files of RetroArch's `screenshots` folder below the granted tree. Returns
+     * display name and document URI pairs, empty when the folder does not exist — the user may
+     * have granted only the `playlists` folder, and RetroArch does not create the folder until
+     * the first screenshot is taken.
+     */
+    suspend fun listScreenshotFiles(): List<Pair<String, Uri>> = withContext(Dispatchers.IO) {
+        val treeUri = getPlaylistsUri() ?: return@withContext emptyList()
+        val rootDocumentId = runCatching { DocumentsContract.getTreeDocumentId(treeUri) }.getOrNull()
+            ?: return@withContext emptyList()
+
+        // The granted tree is usually the RetroArch folder, so the screenshots folder sits next
+        // to playlists and thumbnails at the top; a grant on the folder itself is accepted too.
+        val rootName = rootDocumentId.substringAfterLast('/')
+        val screenshotsId = when {
+            childDirectoryId(treeUri, rootDocumentId, SCREENSHOTS_DIR) != null ->
+                childDirectoryId(treeUri, rootDocumentId, SCREENSHOTS_DIR)
+            rootName.equals(SCREENSHOTS_DIR, ignoreCase = true) -> rootDocumentId
+            else -> null
+        }
+        if (screenshotsId == null) {
+            Log.d(TAG, "No '$SCREENSHOTS_DIR' folder below the granted tree root: $rootDocumentId")
+            return@withContext emptyList()
+        }
+
+        val files = mutableListOf<Pair<String, Uri>>()
+        val childrenUri = try {
+            DocumentsContract.buildChildDocumentsUriUsingTree(treeUri, screenshotsId)
+        } catch (e: Exception) {
+            Log.w(TAG, "Invalid document id: $screenshotsId", e)
+            return@withContext emptyList()
+        }
+        try {
+            contentResolver.query(
+                childrenUri,
+                arrayOf(
+                    DocumentsContract.Document.COLUMN_DOCUMENT_ID,
+                    DocumentsContract.Document.COLUMN_DISPLAY_NAME,
+                    DocumentsContract.Document.COLUMN_MIME_TYPE,
+                ),
+                null,
+                null,
+                null,
+            )?.use { cursor ->
+                val idIndex = cursor.getColumnIndex(DocumentsContract.Document.COLUMN_DOCUMENT_ID)
+                val nameIndex = cursor.getColumnIndex(DocumentsContract.Document.COLUMN_DISPLAY_NAME)
+                val mimeIndex = cursor.getColumnIndex(DocumentsContract.Document.COLUMN_MIME_TYPE)
+                if (idIndex < 0 || nameIndex < 0) return@withContext emptyList()
+                while (cursor.moveToNext()) {
+                    val id = cursor.getString(idIndex) ?: continue
+                    val name = cursor.getString(nameIndex) ?: continue
+                    val mime = if (mimeIndex >= 0) cursor.getString(mimeIndex) else null
+                    if (mime != DocumentsContract.Document.MIME_TYPE_DIR) {
+                        files.add(name to DocumentsContract.buildDocumentUriUsingTree(treeUri, id))
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to list children of $screenshotsId", e)
+        }
+        // RetroArch names its screenshot files with the run timestamp; the newest run sorts last
+        // lexicographically, so reading the list backwards puts the newest ones first.
+        files.sortByDescending { it.first }
+        Log.d(TAG, "Found ${files.size} saved screenshots")
+        files
     }
 
     /** Art of `thumbnails/<systemId>/<artworkFolder>`, null when either folder does not exist. */

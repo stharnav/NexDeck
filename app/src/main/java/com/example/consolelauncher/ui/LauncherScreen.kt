@@ -42,6 +42,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.consolelauncher.data.AppEntry
 import com.example.consolelauncher.data.AppRepository
+import com.example.consolelauncher.data.GalleryImage
 import com.example.consolelauncher.data.LauncherSettingsStore
 import com.example.consolelauncher.data.RecentAppsStore
 import com.example.consolelauncher.data.RetroArchRepository
@@ -49,6 +50,8 @@ import com.example.consolelauncher.data.RetroGameEntry
 import com.example.consolelauncher.data.UserProfileStore
 import com.example.consolelauncher.ui.components.LauncherGameSystems
 import com.example.consolelauncher.ui.components.LauncherSettings
+import com.example.consolelauncher.ui.components.ScreenshotsScreen
+import com.example.consolelauncher.ui.components.ScreenshotsTab
 import com.example.consolelauncher.ui.components.SettingsTab
 import com.example.consolelauncher.ui.components.ACTION_CHANGE_PLAYLISTS
 import com.example.consolelauncher.ui.components.ACTION_GRANT_PLAYLISTS
@@ -87,6 +90,9 @@ fun LauncherRoot(
     var recents by remember { mutableStateOf<List<AppEntry>>(emptyList()) }
     var selectedTab by remember { mutableStateOf(LauncherTab.HOME) }
     var selectedSettingsTab by remember { mutableStateOf(SettingsTab.USER) }
+    var selectedScreenshotsTab by remember { mutableStateOf(ScreenshotsTab.IMAGES) }
+    /** Index within the open screenshots tab' images of the fullscreen viewer, -1 = closed. */
+    var screenshotViewerIndex by remember { mutableIntStateOf(-1) }
     var savedName by remember { mutableStateOf(profileStore.name()) }
     var ambientMode by remember { mutableStateOf(settingsStore.ambientMode()) }
     /** Last game the D-pad (or a tap) landed on, for the ambient mode background. */
@@ -100,6 +106,11 @@ fun LauncherRoot(
     var retroGames by remember { mutableStateOf<List<RetroGameEntry>>(emptyList()) }
     var historyGames by remember { mutableStateOf<List<RetroGameEntry>>(emptyList()) }
     var favouriteGames by remember { mutableStateOf<List<RetroGameEntry>>(emptyList()) }
+    var galleryImages by remember { mutableStateOf<List<GalleryImage>>(emptyList()) }
+    var savedScreenshots by remember { mutableStateOf<List<GalleryImage>>(emptyList()) }
+    var galleryLoading by remember { mutableStateOf(false) }
+    /** True once the gallery scan ran at least once, so "no images" is not shown before it. */
+    var galleryLoaded by remember { mutableStateOf(false) }
     var retroArchAvailable by remember { mutableStateOf(false) }
     var retroHasPlaylistAccess by remember { mutableStateOf(false) }
     var retroHasArtworkAccess by remember { mutableStateOf(false) }
@@ -143,6 +154,22 @@ fun LauncherRoot(
             favouriteGames = emptyList()
         }
         retroLoaded = true
+    }
+
+    // The SCREENSHOTS gallery scans lazily: the playlists and their thumbnails folders are only
+    // walked the first time the menu is opened (and after a scan had run for the games list, so
+    // the access flags are up to date). Images stay in memory, so re-entering is instant.
+    LaunchedEffect(selectedMenu, retroRevision, retroArchAvailable, retroHasPlaylistAccess) {
+        if (selectedMenu != DrawerMenuItem.SCREENSHOTS) return@LaunchedEffect
+        if (!retroArchAvailable || !retroHasPlaylistAccess) {
+            galleryLoaded = true
+            return@LaunchedEffect
+        }
+        galleryLoading = true
+        galleryImages = retroRepository.loadPlaylistImages()
+        savedScreenshots = retroRepository.loadSavedScreenshots()
+        galleryLoading = false
+        galleryLoaded = true
     }
 
     // A different tab or screen shows different games; forget the hovered one so its snap does
@@ -206,6 +233,8 @@ fun LauncherRoot(
         drawerOpen = false
         focusEpoch++
         selectedMenu = item
+        // Navigating away from the SCREENSHOTS menu also closes its fullscreen viewer.
+        screenshotViewerIndex = -1
         if (item == DrawerMenuItem.STEAM && !context.launchSteamLink()) {
             // No Steam Link installed: the STEAM screen explains it instead of going blank.
             steamLinkMissing = true
@@ -244,6 +273,29 @@ fun LauncherRoot(
         else -> null
     }
 
+    // The fullscreen screenshots viewer navigates a flat index over the open tab's images,
+    // wrapping at both ends. D-pad left / right arrive here first (preview), so no tile behind
+    // the viewer can snipe the focus while it is open.
+    val screenshotImages = when (selectedScreenshotsTab) {
+        ScreenshotsTab.IMAGES -> galleryImages
+        ScreenshotsTab.SCREENSHOTS -> savedScreenshots
+    }
+
+    fun showViewerImage(step: Int) {
+        val count = screenshotImages.size
+        if (count == 0) {
+            screenshotViewerIndex = -1
+            return
+        }
+        screenshotViewerIndex = (screenshotViewerIndex + step + count) % count
+    }
+
+    fun closeViewer() {
+        screenshotViewerIndex = -1
+        // The gallery grabs its focus back, like it does after the drawer closes.
+        focusEpoch++
+    }
+
     Box(
         modifier = modifier
             .fillMaxSize()
@@ -256,6 +308,23 @@ fun LauncherRoot(
                 if (event.nativeKeyEvent.action != KeyEvent.ACTION_DOWN) {
                     return@onPreviewKeyEvent false
                 }
+                // While the fullscreen viewer of the SCREENSHOTS menu is open it owns every
+                // key: left / right browse its image list (consumed here, before focus, so
+                // nothing behind the viewer moves focus) and Back closes it.
+                if (screenshotViewerIndex >= 0 && selectedMenu == DrawerMenuItem.SCREENSHOTS) {
+                    when (event.nativeKeyEvent.keyCode) {
+                        KeyEvent.KEYCODE_DPAD_LEFT, KeyEvent.KEYCODE_DPAD_UP ->
+                            showViewerImage(-1)
+
+                        KeyEvent.KEYCODE_DPAD_RIGHT, KeyEvent.KEYCODE_DPAD_DOWN ->
+                            showViewerImage(1)
+
+                        KeyEvent.KEYCODE_BACK, KeyEvent.KEYCODE_BUTTON_B -> closeViewer()
+
+                        else -> Unit
+                    }
+                    return@onPreviewKeyEvent true
+                }
                 when (event.nativeKeyEvent.keyCode) {
                     // MENU or Y toggles the drawer above the launcher.
                     KeyEvent.KEYCODE_MENU, KeyEvent.KEYCODE_BUTTON_Y -> {
@@ -264,14 +333,20 @@ fun LauncherRoot(
                         true
                     }
 
-                    // L1 / R1 flip the tabs of the HOME and SETTINGS screens while the drawer
-                    // is closed.
+                    // L1 / R1 flip the tabs of the HOME, SCREENSHOTS and SETTINGS screens while
+                    // the drawer is closed.
                     KeyEvent.KEYCODE_BUTTON_L1 -> {
                         if (drawerOpen) {
                             false
                         } else when (selectedMenu) {
                             DrawerMenuItem.HOME -> {
                                 selectedTab = selectedTab.previous()
+                                true
+                            }
+
+                            DrawerMenuItem.SCREENSHOTS -> {
+                                selectedScreenshotsTab =
+                                    cycleScreenshotsTab(selectedScreenshotsTab, forward = false)
                                 true
                             }
 
@@ -290,6 +365,12 @@ fun LauncherRoot(
                         } else when (selectedMenu) {
                             DrawerMenuItem.HOME -> {
                                 selectedTab = selectedTab.next()
+                                true
+                            }
+
+                            DrawerMenuItem.SCREENSHOTS -> {
+                                selectedScreenshotsTab =
+                                    cycleScreenshotsTab(selectedScreenshotsTab, forward = true)
                                 true
                             }
 
@@ -349,11 +430,16 @@ fun LauncherRoot(
                 tabTitles = tabsForMenu(selectedMenu),
                 selectedTabTitle = when (selectedMenu) {
                     DrawerMenuItem.HOME -> selectedTab.title
+                    DrawerMenuItem.SCREENSHOTS -> selectedScreenshotsTab.title
                     DrawerMenuItem.SETTINGS -> selectedSettingsTab.title
                     else -> null
                 },
                 onTabSelected = { title ->
                     when (selectedMenu) {
+                        DrawerMenuItem.SCREENSHOTS -> {
+                            selectedScreenshotsTab = ScreenshotsTab.entries.first { it.title == title }
+                        }
+
                         DrawerMenuItem.SETTINGS -> {
                             selectedSettingsTab = SettingsTab.entries.first { it.title == title }
                         }
@@ -416,9 +502,22 @@ fun LauncherRoot(
                         )
                     }
 
-                    DrawerMenuItem.SCREENSHOTS -> EmptyScreen(
-                        title = "SCREENSHOTS",
-                        message = "Your screenshots will appear here",
+                    DrawerMenuItem.SCREENSHOTS -> ScreenshotsScreen(
+                        tab = selectedScreenshotsTab,
+                        playlistImages = galleryImages,
+                        savedScreenshots = savedScreenshots,
+                        loading = (!galleryLoaded || galleryLoading) &&
+                            retroArchAvailable && retroHasPlaylistAccess,
+                        available = retroArchAvailable,
+                        hasPlaylistAccess = retroHasPlaylistAccess,
+                        viewerIndex = screenshotViewerIndex,
+                        onLoadImage = { uri -> retroRepository.loadGalleryImage(uri) },
+                        onLoadFullImage = { uri -> retroRepository.loadSnap(uri) },
+                        onOpenViewer = { screenshotViewerIndex = it },
+                        onViewerClosed = { screenshotViewerIndex = -1 },
+                        onAction = ::handleGameAction,
+                        autoFocusFirstItem = true,
+                        focusEpoch = focusEpoch,
                     )
 
                     DrawerMenuItem.STEAM -> EmptyScreen(
@@ -563,6 +662,7 @@ private fun recentsFrom(store: RecentAppsStore, apps: List<AppEntry>): List<AppE
 /** The tab strip the top bar shows for a drawer menu; the other menus have no tabs. */
 private fun tabsForMenu(menu: DrawerMenuItem): List<String> = when (menu) {
     DrawerMenuItem.HOME -> LauncherTab.entries.map { it.title }
+    DrawerMenuItem.SCREENSHOTS -> ScreenshotsTab.entries.map { it.title }
     DrawerMenuItem.SETTINGS -> SettingsTab.entries.map { it.title }
     else -> emptyList()
 }
@@ -575,6 +675,16 @@ private fun LauncherTab.next(): LauncherTab {
 private fun LauncherTab.previous(): LauncherTab {
     val values = LauncherTab.entries
     return values[(ordinal - 1 + values.size) % values.size]
+}
+
+/** Flips the SCREENSHOTS menu between its IMAGES and SCREENSHOTS tabs. */
+private fun cycleScreenshotsTab(current: ScreenshotsTab, forward: Boolean): ScreenshotsTab {
+    val values = ScreenshotsTab.entries
+    return if (forward) {
+        values[(current.ordinal + 1) % values.size]
+    } else {
+        values[(current.ordinal - 1 + values.size) % values.size]
+    }
 }
 
 private const val ACTION_SHOW_ARTWORK = "games_show_artwork"

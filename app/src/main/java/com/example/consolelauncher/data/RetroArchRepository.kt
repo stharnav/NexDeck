@@ -34,6 +34,9 @@ class RetroArchRepository(context: Context) {
     /** Decoded ambient backgrounds, small LRU so hovering through a playlist cannot OOM. */
     private val snapCache = LruCache<String, ImageBitmap>(3)
     private val missingSnaps = ConcurrentHashMap.newKeySet<String>()
+    /** Decoded gallery thumbnails, small enough that drifting a long gallery stays cheap. */
+    private val galleryCache = LruCache<String, ImageBitmap>(24)
+    private val missingGalleryImages = ConcurrentHashMap.newKeySet<String>()
     private val playlistAccess = RetroArchPlaylistAccess(appContext)
 
     @Volatile
@@ -88,6 +91,19 @@ class RetroArchRepository(context: Context) {
          * rescaled to this size in real pixels once, so the GPU draws them ~1:1.
          */
         private const val ART_TARGET_DP = 200
+
+        /**
+         * Gallery thumbnails decode at most this long edge; the slots are small, so a large
+         * decode would only waste memory, and the fullscreen viewer decodes separately.
+         */
+        private const val GALLERY_MAX_EDGE = 768
+
+        /** Image formats RetroArch saves screenshots and thumbnails in. */
+        private val IMAGE_EXTENSIONS = setOf("png", "jpg", "jpeg", "bmp", "webp")
+
+        /** Section name for taken-in-game screenshots in the gallery. */
+        private const val SAVED_SCREENSHOTS_SECTION = "Screenshot"
+
     }
 
     /** Package name of the installed RetroArch variant, or null when it is not installed. */
@@ -247,6 +263,59 @@ class RetroArchRepository(context: Context) {
         uniqueFavourites.take(FAVOURITES_LIMIT)
     }
 
+    /**
+     * Loads the in-game screenshots that were fetched for the roms of every playlist, grouped
+     * per playlist for the SCREENSHOTS gallery. Only entries with a fetched snap (`Named_Snaps`
+     * of the entry's system) are returned; entries without one stay out of the gallery so no
+     * placeholder tiles appear.
+     */
+    suspend fun loadPlaylistImages(): List<GalleryImage> = withContext(Dispatchers.IO) {
+        if (resolvePackage() == null) {
+            Log.d(TAG, "RetroArch not installed")
+            return@withContext emptyList()
+        }
+        if (!playlistAccess.hasAccess()) {
+            Log.d(TAG, "No SAF access granted to the RetroArch playlists folder")
+            return@withContext emptyList()
+        }
+
+        val playlistUris = playlistAccess.listPlaylistFiles()
+        if (playlistUris.isEmpty()) return@withContext emptyList()
+
+        val images = mutableListOf<GalleryImage>()
+        for (playlistUri in playlistUris) {
+            val playlistName = getDisplayName(playlistUri)
+                ?.removeSuffix(".lpl")
+                ?.takeIf { it.isNotBlank() }
+                ?: continue
+            images.addAll(parsePlaylistImages(playlistUri, playlistName))
+        }
+        Log.d(TAG, "Loaded ${images.size} playlist images for the gallery")
+        images.sortedWith(
+            compareBy<GalleryImage, String>(String.CASE_INSENSITIVE_ORDER) { it.playlist }
+                .thenBy(String.CASE_INSENSITIVE_ORDER) { it.title },
+        )
+    }
+
+    /**
+     * The screenshots that RetroArch saved while a game ran (its `screenshots` folder). Returns
+     * an empty list when the folder is not reachable through the granted tree or nothing was
+     * saved yet.
+     */
+    suspend fun loadSavedScreenshots(): List<GalleryImage> = withContext(Dispatchers.IO) {
+        val files = playlistAccess.listScreenshotFiles()
+        files.filter { (name, _) ->
+            name.substringAfterLast('.', "").lowercase() in IMAGE_EXTENSIONS
+        }.map { (name, uri) ->
+            GalleryImage(
+                id = "shot_${uri.hashCode()}",
+                title = name.substringBeforeLast('.'),
+                playlist = SAVED_SCREENSHOTS_SECTION,
+                uri = uri.toString(),
+            )
+        }
+    }
+
     /** Display name of a SAF document, used to name the playlist. */
     private fun getDisplayName(uri: Uri): String? = try {
         contentResolver.query(
@@ -380,6 +449,62 @@ class RetroArchRepository(context: Context) {
             games
         } catch (e: Exception) {
             Log.w(TAG, "Failed to parse playlist: $playlistName", e)
+            emptyList()
+        }
+    }
+
+    /**
+     * Collects the fetched in-game screenshots (`Named_Snaps`) of one playlist for the gallery.
+     * This mirrors the first half of [parsePlaylistFile] — the JSON is read, entries and their
+     * system databases are collected, and one snap scan over `thumbnails/<system>` resolves every
+     * entry's screenshot the same way [boxArtFor] resolves cover art — but builds no launch
+     * intents, so the gallery does not depend on the game list load.
+     */
+    private suspend fun parsePlaylistImages(
+        playlistUri: Uri,
+        playlistName: String,
+    ): List<GalleryImage> {
+        val jsonText = playlistAccess.readPlaylistFile(playlistUri) ?: return emptyList()
+        return try {
+            val json = JSONObject(jsonText)
+            val items = json.optJSONArray("items") ?: return emptyList()
+
+            val rawItems = mutableListOf<PlaylistItem>()
+            for (index in 0 until items.length()) {
+                val item = items.optJSONObject(index) ?: continue
+                val romPath = item.optString("path", "").trim().takeIf { it.isNotEmpty() } ?: continue
+                val label = item.optString("label", "").trim()
+                    .ifEmpty { romPath.substringAfterLast('/').substringBeforeLast('.') }
+                val dbName = item.optString("db_name", "").trim()
+                    .removeSuffix(".lpl")
+                    .takeIf { it.isNotBlank() }
+                rawItems.add(PlaylistItem(romPath, label, null, null, null, dbName))
+            }
+            if (rawItems.isEmpty()) return emptyList()
+
+            val systems = rawItems.mapNotNull { it.dbName }.distinct()
+            val snapsBySystem = playlistAccess.listArtworkPerSystem(
+                listOf(playlistName) + systems,
+                RetroArchPlaylistAccess.SNAPS_DIR,
+                scanEverySystemFolder = true,
+            )
+
+            rawItems.mapNotNull { raw ->
+                val snapUri = boxArtFor(
+                    mapOf(RetroArchPlaylistAccess.SNAPS_DIR to snapsBySystem),
+                    raw,
+                    fallbackFolders = listOf(playlistName),
+                    artworkFolders = listOf(RetroArchPlaylistAccess.SNAPS_DIR),
+                ) ?: return@mapNotNull null
+                GalleryImage(
+                    id = "snap_${playlistName}#${raw.romPath.hashCode()}",
+                    title = raw.label,
+                    playlist = playlistName,
+                    uri = snapUri.toString(),
+                )
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to collect images of playlist: $playlistName", e)
             emptyList()
         }
     }
@@ -548,21 +673,44 @@ class RetroArchRepository(context: Context) {
         bitmap
     }
 
+    /**
+     * Loads a SCREENSHOTS gallery thumbnail by its SAF document URI. Decodes no larger than
+     * [GALLERY_MAX_EDGE] per side, since the grid slots are small; the fullscreen viewer asks
+     * for [loadSnap] instead, which decodes to the full screen size. Failures are remembered so
+     * a broken file is only read once.
+     */
+    suspend fun loadGalleryImage(uriString: String): ImageBitmap? = withContext(Dispatchers.IO) {
+        galleryCache.get(uriString)?.let { return@withContext it }
+        if (uriString in missingGalleryImages) return@withContext null
+
+        val bitmap = decodeCappedImage(uriString, GALLERY_MAX_EDGE)
+        if (bitmap != null) {
+            galleryCache.put(uriString, bitmap)
+        } else {
+            missingGalleryImages.add(uriString)
+        }
+        bitmap
+    }
+
     private fun decodeSnap(uriString: String): ImageBitmap? {
+        val metrics = appContext.resources.displayMetrics
+        return decodeCappedImage(uriString, maxOf(metrics.widthPixels, metrics.heightPixels))
+    }
+
+    /** Decodes an image from the granted tree no longer than [maxEdge] on its longest side. */
+    private fun decodeCappedImage(uriString: String, maxEdge: Int): ImageBitmap? {
         val source = try {
             contentResolver.openInputStream(Uri.parse(uriString))?.use { BitmapFactory.decodeStream(it) }
         } catch (e: Exception) {
-            Log.d(TAG, "Failed to decode ambient snap $uriString", e)
+            Log.d(TAG, "Failed to decode gallery image $uriString", e)
             null
         } ?: return null
         if (source.width <= 0 || source.height <= 0) return source.asImageBitmap()
 
-        val metrics = appContext.resources.displayMetrics
-        val longestPx = maxOf(metrics.widthPixels, metrics.heightPixels)
         val longestEdge = maxOf(source.width, source.height)
-        if (longestEdge <= longestPx) return source.asImageBitmap()
+        if (longestEdge <= maxEdge) return source.asImageBitmap()
 
-        val scale = longestPx.toFloat() / longestEdge
+        val scale = maxEdge.toFloat() / longestEdge
         val prepared = Bitmap.createScaledBitmap(
             source,
             (source.width * scale).roundToInt().coerceAtLeast(1),

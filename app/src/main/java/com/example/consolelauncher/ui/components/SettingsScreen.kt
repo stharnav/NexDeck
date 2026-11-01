@@ -61,6 +61,7 @@ import kotlinx.coroutines.delay
 /** The tabs of the SETTINGS screen. */
 enum class SettingsTab(val title: String) {
     USER("USER"),
+    FEATURES("FEATURES"),
     RETROARCH("RETROARCH"),
 }
 
@@ -88,7 +89,10 @@ fun LauncherSettings(
     savedName: String,
     retroArchAvailable: Boolean,
     hasPlaylistAccess: Boolean,
+    actionBubbleEnabled: Boolean,
+    overlayPermissionGranted: Boolean,
     ambientModeEnabled: Boolean,
+    onToggleActionBubble: (Boolean) -> Unit,
     onToggleAmbientMode: (Boolean) -> Unit,
     onAction: (LauncherRow.Action) -> Unit,
     onSaveName: (String) -> Unit,
@@ -147,6 +151,37 @@ fun LauncherSettings(
                             nameValue = nameValue.trim()
                         },
                         modifier = Modifier.fillMaxWidth(),
+                    )
+                }
+            }
+
+            SettingsTab.FEATURES -> {
+                item(key = "features_bubble_section") {
+                    SectionTitle("ACTION BUBBLE")
+                }
+                item(key = "features_bubble_value") {
+                    MessageText(
+                        when {
+                            !overlayPermissionGranted ->
+                                "Needs permission first: flip the switch and grant \"Display over other apps\"."
+
+                            actionBubbleEnabled ->
+                                "The floating bubble is on. Drag it anywhere; tap it for the quick-actions panel with Wi-Fi, Bluetooth, airplane mode, do-not-disturb, a HOME button and volume / brightness sliders."
+
+                            else ->
+                                "A small floating bubble sits on top of every screen: drag it anywhere, tap it for quick system actions and launcher shortcuts."
+                        },
+                    )
+                }
+                item(key = "features_bubble_toggle") {
+                    SettingsToggleTile(
+                        label = "ACTION BUBBLE",
+                        description = "Floating quick-action bubble over every screen",
+                        checked = actionBubbleEnabled,
+                        onToggle = onToggleActionBubble,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .thenIf(autoFocusFirstItem) { focusRequester(firstItemRequester) },
                     )
                 }
             }

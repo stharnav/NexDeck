@@ -1,6 +1,8 @@
 package com.example.consolelauncher.ui
 
 import android.content.Intent
+import android.net.Uri
+import android.provider.Settings
 import android.view.KeyEvent
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -40,6 +42,8 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.consolelauncher.MainActivity
+import com.example.consolelauncher.bubble.ActionBubbleService
 import com.example.consolelauncher.data.AppEntry
 import com.example.consolelauncher.data.AppRepository
 import com.example.consolelauncher.data.GalleryImage
@@ -76,6 +80,8 @@ import com.example.consolelauncher.ui.theme.ConsoleTextSecondary
 @Composable
 fun LauncherRoot(
     refreshKey: Int,
+    pendingTarget: String? = null,
+    onTargetConsumed: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     val context = LocalContext.current
@@ -95,6 +101,8 @@ fun LauncherRoot(
     var screenshotViewerIndex by remember { mutableIntStateOf(-1) }
     var savedName by remember { mutableStateOf(profileStore.name()) }
     var ambientMode by remember { mutableStateOf(settingsStore.ambientMode()) }
+    var actionBubble by remember { mutableStateOf(settingsStore.actionBubble()) }
+    var overlayGranted by remember { mutableStateOf(Settings.canDrawOverlays(context)) }
     /** Last game the D-pad (or a tap) landed on, for the ambient mode background. */
     var hoveredGame by remember { mutableStateOf<RetroGameEntry?>(null) }
     var selectedMenu by remember { mutableStateOf(DrawerMenuItem.HOME) }
@@ -128,10 +136,60 @@ fun LauncherRoot(
         }
     }
 
+    // The overlay permission lives on its own system settings page (no runtime dialog). Flipping
+    // the ACTION BUBBLE switch on without it opens that page; the switch only turns on for real
+    // once the user comes back with the permission granted.
+    val overlayPermissionRequest = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.StartActivityForResult(),
+    ) {
+        overlayGranted = Settings.canDrawOverlays(context)
+        if (overlayGranted) {
+            settingsStore.setActionBubble(true)
+            actionBubble = true
+        }
+    }
+
     LaunchedEffect(refreshKey) {
         val loaded = repository.loadLaunchableApps()
         apps = loaded
         recents = recentsFrom(recentStore, loaded)
+    }
+
+    // The ACTION BUBBLE can be granted (or revoked) from the system settings while the launcher
+    // is away, and its HIDE shortcut re-writes the switch itself; re-sync both on every return.
+    LaunchedEffect(refreshKey) {
+        overlayGranted = Settings.canDrawOverlays(context)
+        actionBubble = settingsStore.actionBubble()
+    }
+
+    // Keep the bubble overlay service aligned with the switch and the permission.
+    LaunchedEffect(actionBubble, overlayGranted) {
+        val service = Intent(context, ActionBubbleService::class.java)
+        try {
+            if (actionBubble && overlayGranted) context.startService(service)
+            else context.stopService(service)
+        } catch (_: Exception) {
+            // Nothing on screen depends on the bubble; a failed start simply leaves it hidden.
+        }
+    }
+
+    // A bubble shortcut intent can ask the launcher to open straight on the HOME grid or the
+    // ALL APPS tab; consume the request once the state was applied.
+    LaunchedEffect(pendingTarget) {
+        when (pendingTarget) {
+            MainActivity.TARGET_HOME -> {
+                drawerOpen = false
+                selectedMenu = DrawerMenuItem.HOME
+                selectedTab = LauncherTab.HOME
+            }
+
+            MainActivity.TARGET_APPS -> {
+                drawerOpen = false
+                selectedMenu = DrawerMenuItem.HOME
+                selectedTab = LauncherTab.ALL_APPS
+            }
+        }
+        if (pendingTarget != null) onTargetConsumed()
     }
 
     LaunchedEffect(refreshKey, retroRevision, ambientMode) {
@@ -226,6 +284,26 @@ fun LauncherRoot(
         settingsStore.setAmbientMode(enabled)
         // Commit is synchronous, so the flag already round-trips through the store.
         ambientMode = enabled
+    }
+
+    fun toggleActionBubble(enabled: Boolean) {
+        if (enabled && !overlayGranted) {
+            try {
+                overlayPermissionRequest.launch(
+                    Intent(
+                        Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                        Uri.parse("package:${context.packageName}"),
+                    ),
+                )
+            } catch (_: Exception) {
+                // Some TV builds ship no such settings page; re-check in case it is already there.
+                overlayGranted = Settings.canDrawOverlays(context)
+            }
+            return
+        }
+        settingsStore.setActionBubble(enabled)
+        // Commit is synchronous, so the flag already round-trips through the store.
+        actionBubble = enabled
     }
 
     fun handleMenu(item: DrawerMenuItem) {
@@ -534,7 +612,10 @@ fun LauncherRoot(
                         savedName = savedName,
                         retroArchAvailable = retroArchAvailable,
                         hasPlaylistAccess = retroHasPlaylistAccess,
+                        actionBubbleEnabled = actionBubble,
+                        overlayPermissionGranted = overlayGranted,
                         ambientModeEnabled = ambientMode,
+                        onToggleActionBubble = ::toggleActionBubble,
                         onToggleAmbientMode = ::toggleAmbientMode,
                         onAction = ::handleGameAction,
                         onSaveName = ::saveName,

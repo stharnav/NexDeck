@@ -4,6 +4,17 @@
     <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
     <!-- Without it the connectivity manager does not report an active network to this app. -->
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- The ACTION BUBBLE overlay window floats on top of every screen, which needs the special
+         "Display over other apps" permission (granted through its own settings page, not a
+         runtime dialog). The bubble service only inserts its window once this is granted. -->
+    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
+    <!-- Declared so the bubble's brightness slider can request the special "Modify system
+         settings" grant (Settings.System.canWrite) from its own page; without it the slider
+         snaps back and opens the grant screen instead. -->
+    <uses-permission android:name="android.permission.WRITE_SETTINGS" />
+    <!-- Without this declaration the launcher never shows up in the "Do Not Disturb access"
+         list, so the bubble's DND toggle could ask for the grant but never receive it. -->
+    <uses-permission android:name="android.permission.ACCESS_NOTIFICATION_POLICY" />
     <queries>
         <intent>
             <action android:name="android.intent.action.MAIN" />
@@ -42,6 +53,10 @@
             </intent-filter>
 
         </activity>
+
+        <service
+            android:name=".bubble.ActionBubbleService"
+            android:exported="false" />
     </application>
 
 </manifest>

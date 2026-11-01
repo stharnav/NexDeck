@@ -20,8 +20,16 @@ class LauncherSettingsStore(context: Context) {
         prefs.edit().putBoolean(KEY_AMBIENT_MODE, enabled).commit()
     }
 
+    /** Whether the floating ACTION BUBBLE overlay is enabled (it also needs the overlay permission). */
+    fun actionBubble(): Boolean = prefs.getBoolean(KEY_ACTION_BUBBLE, false)
+
+    fun setActionBubble(enabled: Boolean) {
+        prefs.edit().putBoolean(KEY_ACTION_BUBBLE, enabled).commit()
+    }
+
     private companion object {
         const val PREFS_NAME = "console_launcher_settings"
         const val KEY_AMBIENT_MODE = "retroarch_ambient_mode"
+        const val KEY_ACTION_BUBBLE = "features_action_bubble"
     }
 }

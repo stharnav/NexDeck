@@ -1,5 +1,6 @@
 package com.example.consolelauncher
 
+import android.content.Intent
 import android.graphics.Color
 import android.os.Build
 import android.os.Bundle
@@ -8,6 +9,7 @@ import androidx.activity.SystemBarStyle
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
@@ -16,11 +18,24 @@ import com.example.consolelauncher.ui.theme.ConsoleLauncherTheme
 
 class MainActivity : ComponentActivity() {
 
+    companion object {
+        /**
+         * Extra carried by the ACTION BUBBLE shortcut intents so the launcher opens straight on a
+         * specific screen instead of restoring wherever it was left.
+         */
+        const val EXTRA_TARGET_SCREEN = "console_launcher.target_screen"
+        const val TARGET_HOME = "home"
+        const val TARGET_APPS = "apps"
+    }
+
     /**
      * Bumped every time the launcher comes back to the foreground so that the app list and the
      * launch history are refreshed after the user came back from another application.
      */
     private val refreshKey = mutableIntStateOf(0)
+
+    /** A bubble shortcut target waiting to be consumed by [LauncherRoot], null once consumed. */
+    private val pendingTarget = mutableStateOf<String?>(null)
     private var hasResumed = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -33,11 +48,30 @@ class MainActivity : ComponentActivity() {
             window.isNavigationBarContrastEnforced = false
         }
         enterFullscreen()
+        consumeTarget(intent)
         setContent {
             ConsoleLauncherTheme {
-                LauncherRoot(refreshKey = refreshKey.intValue)
+                LauncherRoot(
+                    refreshKey = refreshKey.intValue,
+                    pendingTarget = pendingTarget.value,
+                    onTargetConsumed = { pendingTarget.value = null },
+                )
             }
         }
+    }
+
+    /**
+     * The launcher is `singleTask`, so bubble shortcut intents land here when the launcher is
+     * already running; the raw intent carries the target screen for [LauncherRoot].
+     */
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        consumeTarget(intent)
+    }
+
+    private fun consumeTarget(intent: Intent?) {
+        val target = intent?.getStringExtra(EXTRA_TARGET_SCREEN) ?: return
+        pendingTarget.value = target
     }
 
     override fun onResume() {

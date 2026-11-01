@@ -416,11 +416,6 @@ fun LauncherRoot(
                         )
                     }
 
-                    DrawerMenuItem.SETUP -> EmptyScreen(
-                        title = "SETUP",
-                        message = "Setup options will appear here",
-                    )
-
                     DrawerMenuItem.SCREENSHOTS -> EmptyScreen(
                         title = "SCREENSHOTS",
                         message = "Your screenshots will appear here",
@@ -461,6 +456,7 @@ fun LauncherRoot(
                 drawerOpen = false
                 focusEpoch++
             },
+            userName = savedName,
             modifier = Modifier.fillMaxSize(),
         )
     }

@@ -28,7 +28,7 @@ MainActivity (entry, HOME intent filter)
       ├─ RecentAppsStore (SharedPreferences, newline-separated package list, sync commit)
       └─ LauncherGrid (LazyVerticalGrid, 4 columns, focus management)
       └─ LauncherGameSystems (GAMES tab: one horizontal row per system/playlist)
-      └─ DrawerOverlay (collapsible left drawer, slides above the launcher; items: HOME, SETUP, SCREENSHOTS, STEAM, SETTINGS)
+      └─ DrawerOverlay (collapsible left drawer, slides above the launcher; items: HOME, SCREENSHOTS, STEAM, SETTINGS)
 ```
 
 ## Launcher-Specific Details

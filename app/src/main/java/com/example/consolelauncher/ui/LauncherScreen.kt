@@ -69,8 +69,11 @@ import com.example.consolelauncher.ui.components.LauncherTab
 import com.example.consolelauncher.ui.components.StatusBar
 import com.example.consolelauncher.ui.components.launchSteamLink
 import com.example.consolelauncher.ui.components.cycleSettingsTab
+import com.example.consolelauncher.ui.theme.AccentOption
 import com.example.consolelauncher.ui.theme.ConsoleBackground
 import com.example.consolelauncher.ui.theme.ConsoleTextSecondary
+import com.example.consolelauncher.ui.theme.accentOptionById
+import com.example.consolelauncher.ui.theme.setAccentOption
 
 /**
  * The launcher home screen. It shows recently launched apps plus the RetroArch play history and
@@ -102,6 +105,9 @@ fun LauncherRoot(
     var savedName by remember { mutableStateOf(profileStore.name()) }
     var ambientMode by remember { mutableStateOf(settingsStore.ambientMode()) }
     var actionBubble by remember { mutableStateOf(settingsStore.actionBubble()) }
+    var accentOption by remember {
+        mutableStateOf(accentOptionById(settingsStore.accentColor()))
+    }
     var overlayGranted by remember { mutableStateOf(Settings.canDrawOverlays(context)) }
     /** Last game the D-pad (or a tap) landed on, for the ambient mode background. */
     var hoveredGame by remember { mutableStateOf<RetroGameEntry?>(null) }
@@ -284,6 +290,25 @@ fun LauncherRoot(
         settingsStore.setAmbientMode(enabled)
         // Commit is synchronous, so the flag already round-trips through the store.
         ambientMode = enabled
+    }
+
+    fun cycleAccentOption() {
+        val values = AccentOption.entries
+        val next = values[(accentOption.ordinal + 1) % values.size]
+        settingsStore.setAccentColor(next.id)
+        setAccentOption(next)
+        accentOption = next
+        // The ACTION BUBBLE only beds in its colors when the service starts, so a running
+        // bubble restarts to pick up the new accent (the panel re-styles on every open).
+        if (actionBubble && overlayGranted) {
+            val service = Intent(context, ActionBubbleService::class.java)
+            try {
+                context.stopService(service)
+                context.startService(service)
+            } catch (_: Exception) {
+                // Losing just the bubble is fine; the launcher keeps its own new colors.
+            }
+        }
     }
 
     fun toggleActionBubble(enabled: Boolean) {
@@ -610,6 +635,7 @@ fun LauncherRoot(
                     DrawerMenuItem.SETTINGS -> LauncherSettings(
                         tab = selectedSettingsTab,
                         savedName = savedName,
+                        accentOption = accentOption,
                         retroArchAvailable = retroArchAvailable,
                         hasPlaylistAccess = retroHasPlaylistAccess,
                         actionBubbleEnabled = actionBubble,
@@ -617,6 +643,7 @@ fun LauncherRoot(
                         ambientModeEnabled = ambientMode,
                         onToggleActionBubble = ::toggleActionBubble,
                         onToggleAmbientMode = ::toggleAmbientMode,
+                        onCycleAccent = ::cycleAccentOption,
                         onAction = ::handleGameAction,
                         onSaveName = ::saveName,
                         autoFocusFirstItem = true,

@@ -5,6 +5,7 @@ import android.view.KeyEvent
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.focusable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -19,6 +20,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.selection.toggleable
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
@@ -39,6 +41,7 @@ import androidx.compose.ui.focus.FocusDirection
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.input.key.onKeyEvent
 import androidx.compose.ui.input.key.onPreviewKeyEvent
@@ -51,9 +54,11 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.consolelauncher.ui.theme.AccentOption
 import com.example.consolelauncher.ui.theme.ConsoleAccent
 import com.example.consolelauncher.ui.theme.ConsoleStroke
 import com.example.consolelauncher.ui.theme.ConsoleSurface
+import com.example.consolelauncher.ui.theme.ConsoleSurfaceHigh
 import com.example.consolelauncher.ui.theme.ConsoleTextPrimary
 import com.example.consolelauncher.ui.theme.ConsoleTextSecondary
 import kotlinx.coroutines.delay
@@ -80,13 +85,14 @@ internal fun cycleSettingsTab(from: SettingsTab, forward: Boolean): SettingsTab 
 
 /**
  * The SETTINGS screen: the same console look as the home tabs, one section per tab. USER asks
- * for and saves the player's display name, RETROARCH keeps the playlist folder controls that
- * used to sit at the bottom of the GAMES tab plus the ambient mode switch.
+ * for and saves the player's display name, FEATURES carries the look rows (theme, accent color)
+ * and the ACTION BUBBLE switch, RETROARCH keeps the playlist folder controls.
  */
 @Composable
 fun LauncherSettings(
     tab: SettingsTab,
     savedName: String,
+    accentOption: AccentOption,
     retroArchAvailable: Boolean,
     hasPlaylistAccess: Boolean,
     actionBubbleEnabled: Boolean,
@@ -94,6 +100,7 @@ fun LauncherSettings(
     ambientModeEnabled: Boolean,
     onToggleActionBubble: (Boolean) -> Unit,
     onToggleAmbientMode: (Boolean) -> Unit,
+    onCycleAccent: () -> Unit,
     onAction: (LauncherRow.Action) -> Unit,
     onSaveName: (String) -> Unit,
     autoFocusFirstItem: Boolean = false,
@@ -182,6 +189,35 @@ fun LauncherSettings(
                         modifier = Modifier
                             .fillMaxWidth()
                             .thenIf(autoFocusFirstItem) { focusRequester(firstItemRequester) },
+                    )
+                }
+
+                item(key = "features_themes_section") {
+                    SectionTitle("THEMES")
+                }
+                item(key = "features_themes_message") {
+                    MessageText(
+                        "The launcher runs the dark console theme. Pick the highlight color; more themes arrive later.",
+                    )
+                }
+                item(key = "features_theme") {
+                    SettingsChoiceTile(
+                        label = "THEME",
+                        description = "Default dark theme (more themes coming soon)",
+                        value = "DARK",
+                        swatch = ConsoleSurfaceHigh,
+                        onSelect = { /* Only the dark theme exists for now. */ },
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                }
+                item(key = "features_color") {
+                    SettingsChoiceTile(
+                        label = "COLOR",
+                        description = "Highlight color used across the launcher",
+                        value = accentOption.label,
+                        swatch = accentOption.accent,
+                        onSelect = onCycleAccent,
+                        modifier = Modifier.fillMaxWidth(),
                     )
                 }
             }
@@ -324,6 +360,82 @@ private fun SwitchPill(checked: Boolean, focused: Boolean) {
                 .clip(RoundedCornerShape(9.dp))
                 .background(if (checked) ConsoleSurface else ConsoleTextSecondary),
         )
+    }
+}
+
+/**
+ * A selectable settings row: label and description on the left, a color swatch plus the current
+ * value on the right. Enter, the gamepad A button or a tap activates the row (cycle / pick).
+ */
+@Composable
+private fun SettingsChoiceTile(
+    label: String,
+    description: String,
+    value: String,
+    swatch: Color,
+    onSelect: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    var focused by remember { mutableStateOf(false) }
+    val shape = RoundedCornerShape(ACTION_CORNER)
+
+    Row(
+        modifier = modifier
+            .scale(if (focused) 1.01f else 1f)
+            .clip(shape)
+            .background(if (focused) ConsoleAccent.copy(alpha = 0.18f) else ConsoleSurface)
+            .border(
+                width = if (focused) 2.dp else 1.dp,
+                color = if (focused) ConsoleAccent else ConsoleStroke,
+                shape = shape,
+            )
+            .onFocusChanged { focused = it.isFocused }
+            .focusable()
+            .onKeyEvent { event ->
+                if (event.nativeKeyEvent.action == KeyEvent.ACTION_DOWN && event.isSelectKey()) {
+                    onSelect()
+                    true
+                } else {
+                    false
+                }
+            }
+            .clickable(onClick = onSelect)
+            .padding(horizontal = 16.dp, vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(Modifier.weight(1f)) {
+            Text(
+                text = label,
+                style = MaterialTheme.typography.labelLarge,
+                fontWeight = FontWeight.Bold,
+                letterSpacing = 1.sp,
+                color = if (focused) ConsoleAccent else ConsoleTextPrimary,
+            )
+            Spacer(Modifier.height(2.dp))
+            Text(
+                text = description,
+                style = MaterialTheme.typography.bodySmall,
+                color = ConsoleTextSecondary,
+            )
+        }
+        Spacer(Modifier.width(12.dp))
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Box(
+                modifier = Modifier
+                    .size(20.dp)
+                    .clip(CircleShape)
+                    .background(swatch)
+                    .border(width = 1.dp, color = ConsoleStroke, shape = CircleShape),
+            )
+            Spacer(Modifier.width(8.dp))
+            Text(
+                text = value,
+                style = MaterialTheme.typography.labelLarge,
+                fontWeight = FontWeight.Bold,
+                letterSpacing = 1.sp,
+                color = if (focused) ConsoleAccent else ConsoleTextSecondary,
+            )
+        }
     }
 }
 

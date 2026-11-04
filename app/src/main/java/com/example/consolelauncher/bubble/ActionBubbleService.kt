@@ -31,7 +31,10 @@ import android.widget.TextView
 import com.example.consolelauncher.MainActivity
 import com.example.consolelauncher.R
 import com.example.consolelauncher.data.LauncherSettingsStore
+import com.example.consolelauncher.ui.theme.accentOptionById
+import androidx.compose.ui.graphics.toArgb
 import kotlin.math.abs
+import kotlin.math.roundToInt
 
 /**
  * The ACTION BUBBLE feature: a small floating bubble a [WindowManager] overlay keeps on top of
@@ -59,6 +62,14 @@ class ActionBubbleService : Service() {
     private lateinit var settingsStore: LauncherSettingsStore
     private lateinit var audio: AudioManager
     private lateinit var notifications: NotificationManager
+
+    // The accent colors come from the THEMES tab of the settings (see [applyAccentColors]);
+    // they are initialized with the default blue so the fields are never 0.
+    private var accentColor = 0xFF4FA3FF.toInt()
+    private var accentSoftColor = 0xFF66C0F4.toInt()
+
+    /** The surface blended ~25% into the accent: the "feature is on" shade of the toggle rows. */
+    private var tintOnColor = 0xFF2D4562.toInt()
 
     private var bubbleWindow: View? = null
     private var bubbleParams: WindowManager.LayoutParams? = null
@@ -94,8 +105,32 @@ class ActionBubbleService : Service() {
         super.onCreate()
         windowManager = getSystemService(WINDOW_SERVICE) as WindowManager
         settingsStore = LauncherSettingsStore(this)
+        applyAccentColors()
         audio = getSystemService(Context.AUDIO_SERVICE) as AudioManager
         notifications = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+    }
+
+    /**
+     * Applies the accent the user picked on the THEMES tab: the radio tiles, sliders, buttons and
+     * the bubble itself all rebuild with these values. Windows built before a change (the bubble
+     * head) re-apply when the launcher restarts this service.
+     */
+    private fun applyAccentColors() {
+        val option = accentOptionById(settingsStore.accentColor())
+        accentColor = option.accent.toArgb()
+        accentSoftColor = option.accentSoft.toArgb()
+        tintOnColor = blendIntoSurface(accentColor)
+    }
+
+    /** The surface blended [fraction]-deep with [accent], the recipe of the old TINT_ON. */
+    private fun blendIntoSurface(accent: Int, fraction: Float = 0.25f): Int {
+        fun channel(base: Int, overlay: Int): Int = (base + (overlay - base) * fraction).roundToInt()
+        return Color.argb(
+            Color.alpha(SURFACE),
+            channel(Color.red(SURFACE), Color.red(accent)),
+            channel(Color.green(SURFACE), Color.green(accent)),
+            channel(Color.blue(SURFACE), Color.blue(accent)),
+        )
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -137,7 +172,7 @@ class ActionBubbleService : Service() {
         val bubble = ImageView(this).apply {
             setImageResource(R.drawable.quickbubble)
             imageTintList = ColorStateList.valueOf(Color.BLACK)
-            background = rounded(intArrayOf(ACCENT, ACCENT_SOFT), radiusDp = 20f)
+            background = rounded(intArrayOf(accentColor, accentSoftColor), radiusDp = 20f)
             scaleType = ImageView.ScaleType.FIT_CENTER
             setPadding(
                 (9 * resources.displayMetrics.density).toInt(),
@@ -594,11 +629,11 @@ class ActionBubbleService : Service() {
 
         val on = status.text == "ON"
         val background = when {
-            focused -> ACCENT
-            on -> TINT_ON
+            focused -> accentColor
+            on -> tintOnColor
             else -> SURFACE
         }
-        val stroke = if (focused || on) ACCENT else STROKE
+        val stroke = if (focused || on) accentColor else STROKE
         cell.background = rounded(intArrayOf(background, background), radiusDp = 12f, strokeColor = stroke)
 
         if (focused) {
@@ -606,8 +641,8 @@ class ActionBubbleService : Service() {
             paintIcon(icon, ON_ACCENT)
             status.setTextColor(ON_ACCENT)
         } else {
-            paintIcon(icon, if (on) ACCENT else TEXT_PRIMARY)
-            status.setTextColor(if (on) ACCENT else TEXT_SECONDARY)
+            paintIcon(icon, if (on) accentColor else TEXT_PRIMARY)
+            status.setTextColor(if (on) accentColor else TEXT_SECONDARY)
         }
     }
 
@@ -633,7 +668,7 @@ class ActionBubbleService : Service() {
                 (ROW_HEIGHT_DP * density).toInt(),
             )
         }
-        applyRowStyle(button, focusedBg = ACCENT)
+        applyRowStyle(button, focusedBg = accentColor)
         button.setOnClickListener { onClick() }
         button.setOnKeyListener(backCatcher)
         return button
@@ -689,13 +724,13 @@ class ActionBubbleService : Service() {
      * reads as picked while the slider stays visible.
      */
     private fun styleSliderRow(row: View, icon: View, focused: Boolean) {
-        val background = if (focused) TINT_ON else SURFACE
+        val background = if (focused) tintOnColor else SURFACE
         row.background = rounded(
             intArrayOf(background, background),
             radiusDp = 12f,
-            strokeColor = if (focused) ACCENT else STROKE,
+            strokeColor = if (focused) accentColor else STROKE,
         )
-        paintIcon(icon, if (focused) ACCENT else TEXT_PRIMARY)
+        paintIcon(icon, if (focused) accentColor else TEXT_PRIMARY)
     }
 
     /**
@@ -733,14 +768,14 @@ class ActionBubbleService : Service() {
         }
 
     /** Shared focus styling: every row highlights like the launcher tiles when it gets the focus. */
-    private fun applyRowStyle(view: View, focusedBg: Int = ACCENT) {
+    private fun applyRowStyle(view: View, focusedBg: Int = accentColor) {
         view.isFocusable = true
         fun update(focused: Boolean) {
             val bg = if (focused) focusedBg else SURFACE
             view.background = rounded(
                 intArrayOf(bg, bg),
                 radiusDp = 12f,
-                strokeColor = if (focused) ACCENT else STROKE,
+                strokeColor = if (focused) accentColor else STROKE,
             )
         }
         view.onFocusChangeListener = View.OnFocusChangeListener { _, hasFocus -> update(hasFocus) }
@@ -748,8 +783,8 @@ class ActionBubbleService : Service() {
     }
 
     private fun SeekBar.tintTrack() {
-        thumbTintList = android.content.res.ColorStateList.valueOf(ACCENT)
-        progressTintList = android.content.res.ColorStateList.valueOf(ACCENT)
+        thumbTintList = android.content.res.ColorStateList.valueOf(accentColor)
+        progressTintList = android.content.res.ColorStateList.valueOf(accentColor)
         progressBackgroundTintList = android.content.res.ColorStateList.valueOf(STROKE)
     }
 
@@ -938,11 +973,9 @@ class ActionBubbleService : Service() {
         const val BRIGHTNESS_MIN = 10
         const val BRIGHTNESS_MAX = 255
 
-        const val ACCENT = 0xFF4FA3FF.toInt()
-        const val ACCENT_SOFT = 0xFF66C0F4.toInt()
+        // The accent colors no longer live here as constants: they come from the THEMES tab and
+        // are applied as instance fields (see applyAccentColors).
         const val SURFACE = 0xFF22262E.toInt()
-        /** The surface blended ~25% into the accent: the "feature is on" shade of the toggle rows. */
-        const val TINT_ON = 0xFF2D4562.toInt()
         const val ON_ACCENT = 0xFF06101F.toInt()
         const val ICON_BG = 0xFF2B303A.toInt()
         const val PANEL_BG = 0xE6161A20.toInt()

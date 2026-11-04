@@ -13,8 +13,11 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
+import com.example.consolelauncher.data.LauncherSettingsStore
 import com.example.consolelauncher.ui.LauncherRoot
 import com.example.consolelauncher.ui.theme.ConsoleLauncherTheme
+import com.example.consolelauncher.ui.theme.accentOptionById
+import com.example.consolelauncher.ui.theme.setAccentOption
 
 class MainActivity : ComponentActivity() {
 
@@ -49,6 +52,11 @@ class MainActivity : ComponentActivity() {
         }
         enterFullscreen()
         consumeTarget(intent)
+        // Restore the persisted accent before the first frame composes so the theme does not
+        // flash the default blue after a process death.
+        setAccentOption(
+            accentOptionById(LauncherSettingsStore(this).accentColor()),
+        )
         setContent {
             ConsoleLauncherTheme {
                 LauncherRoot(

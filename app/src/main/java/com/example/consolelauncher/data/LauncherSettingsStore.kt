@@ -3,8 +3,9 @@ package com.example.consolelauncher.data
 import android.content.Context
 
 /**
- * Launcher-wide feature switches persisted locally. Today it only holds the RetroArch
- * "ambient mode" flag; the toggles on the SETTINGS/RETROARCH tab grow with it.
+ * Launcher-wide feature switches persisted locally. Today it holds the RetroArch "ambient mode"
+ * flag, the ACTION BUBBLE toggle and the THEMES accent color; the rows on the SETTINGS tabs
+ * grow with it.
  *
  * The same synchronous write policy as [UserProfileStore] applies: the launcher process can die
  * at any moment, so changes are committed instead of applied.
@@ -27,9 +28,21 @@ class LauncherSettingsStore(context: Context) {
         prefs.edit().putBoolean(KEY_ACTION_BUBBLE, enabled).commit()
     }
 
+    /**
+     * The accent color picked on the THEMES tab, stored as its [id] string so the data layer
+     * stays independent of the UI. Empty/unknown values fall back to the default blue.
+     */
+    fun accentColor(): String = prefs.getString(KEY_ACCENT_COLOR, DEFAULT_ACCENT) ?: DEFAULT_ACCENT
+
+    fun setAccentColor(value: String) {
+        prefs.edit().putString(KEY_ACCENT_COLOR, value).commit()
+    }
+
     private companion object {
         const val PREFS_NAME = "console_launcher_settings"
         const val KEY_AMBIENT_MODE = "retroarch_ambient_mode"
         const val KEY_ACTION_BUBBLE = "features_action_bubble"
+        const val KEY_ACCENT_COLOR = "themes_accent_color"
+        const val DEFAULT_ACCENT = "blue"
     }
 }

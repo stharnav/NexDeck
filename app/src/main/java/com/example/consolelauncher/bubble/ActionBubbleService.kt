@@ -6,6 +6,7 @@ import android.app.Service
 import android.bluetooth.BluetoothManager
 import android.content.Context
 import android.content.Intent
+import android.content.res.ColorStateList
 import android.graphics.Color
 import android.graphics.PixelFormat
 import android.graphics.Typeface
@@ -22,11 +23,13 @@ import android.view.View
 import android.view.ViewConfiguration
 import android.view.ViewGroup
 import android.view.WindowManager
+import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.SeekBar
 import android.widget.TextView
 import com.example.consolelauncher.MainActivity
+import com.example.consolelauncher.R
 import com.example.consolelauncher.data.LauncherSettingsStore
 import kotlin.math.abs
 
@@ -37,14 +40,15 @@ import kotlin.math.abs
  * The bubble can be dragged anywhere with a finger or a mouse; a tap without a real drag opens a
  * rectangular quick-actions panel anchored next to it:
  *
- *  - the system toggles (WIFI, BLUETOOTH, AIRPLANE MODE, DO NOT DISTURB). Non-system apps may not
- *    flip the radios themselves, so each row shows the live state and clicks open the matching
- *    system settings panel where Android wants the change made. DO NOT DISTURB flips directly once
- *    the notification policy access was granted, otherwise its rows opens that grant screen.
- *  - a HOME button into the launcher.
+ *  - a 2 by 2 icon grid of the system toggles: Wi-Fi and Bluetooth on the top row, Airplane mode
+ *    and Do Not Disturb on the second. Non-system apps may not flip the radios themselves, so
+ *    each tile shows the live state and clicks open the matching system settings panel where
+ *    Android wants the change made. DO NOT DISTURB flips directly once the notification policy
+ *    access was granted, otherwise its tile opens that grant screen.
  *  - VOLUME and BRIGHTNESS sliders. Brightness needs the separate "Modify system settings"
  *    permission (WRITE_SETTINGS); until it is granted the slider snaps back and the first drag
  *    opens the permission page.
+ *  - a BACK | HOME navigation row at the bottom, BACK focused on open.
  *
  * The panel window takes focus while it is open, so a remote/D-pad can also drive it; BACK or
  * B (or tapping the bubble again) collapses it.
@@ -63,7 +67,7 @@ class ActionBubbleService : Service() {
     private var panelParams: WindowManager.LayoutParams? = null
     private var statusRegisters = mutableMapOf<String, TextView>()
     private var viewRegisters = mutableMapOf<String, LinearLayout>()
-    private var labelRegisters = mutableMapOf<String, TextView>()
+    private var iconRegisters = mutableMapOf<String, View>()
 
     // Drag bookkeeping for the bubble itself.
     private var touchStartX = 0f
@@ -118,7 +122,7 @@ class ActionBubbleService : Service() {
         bubbleParams = null
         statusRegisters.clear()
         viewRegisters.clear()
-        labelRegisters.clear()
+        iconRegisters.clear()
     }
 
     // ----------------------------------------------------------------------------- the bubble
@@ -127,19 +131,22 @@ class ActionBubbleService : Service() {
     private fun showBubble() {
         val density = resources.displayMetrics.density
 
-        val bubble = TextView(this).apply {
-            text = "⚡"
-            textSize = 18f
-            typeface = Typeface.DEFAULT_BOLD
-            gravity = Gravity.CENTER
-            setTextColor(Color.BLACK)
-            background = rounded(intArrayOf(ACCENT, ACCENT_SOFT), radiusDp = 28f)
-            elevation = 6f * density
-            contentDescription = "Action bubble"
-            layoutParams = LinearLayout.LayoutParams(
-                (BUBBLE_SIZE_DP * density).toInt(),
-                (BUBBLE_SIZE_DP * density).toInt(),
+        // The bubble head now wears the provided quick-bubble icon on its accent circle.
+        // FIT_CENTER keeps the oversized source PNG inside the circle; the padding leaves an
+        // even accent ring around the glyph.
+        val bubble = ImageView(this).apply {
+            setImageResource(R.drawable.quickbubble)
+            imageTintList = ColorStateList.valueOf(Color.BLACK)
+            background = rounded(intArrayOf(ACCENT, ACCENT_SOFT), radiusDp = 20f)
+            scaleType = ImageView.ScaleType.FIT_CENTER
+            setPadding(
+                (9 * resources.displayMetrics.density).toInt(),
+                (9 * resources.displayMetrics.density).toInt(),
+                (9 * resources.displayMetrics.density).toInt(),
+                (9 * resources.displayMetrics.density).toInt(),
             )
+            elevation = 6f * resources.displayMetrics.density
+            contentDescription = "Action bubble"
         }
 
         val touchSlop = ViewConfiguration.get(this).scaledTouchSlop
@@ -193,13 +200,18 @@ class ActionBubbleService : Service() {
 
     private fun overlayParams(): WindowManager.LayoutParams {
         val density = resources.displayMetrics.density
+        val size = (BUBBLE_SIZE_DP * density).toInt()
         return WindowManager.LayoutParams().apply {
             type = WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
             format = PixelFormat.TRANSLUCENT
             flags = WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
                 WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN
-            width = WindowManager.LayoutParams.WRAP_CONTENT
-            height = WindowManager.LayoutParams.WRAP_CONTENT
+            // The window size is the only size that counts: on a window's root view the
+            // WindowManager overwrites the view's own LayoutParams with these, so a size set on
+            // the ImageView alone would be silently ignored and the 512px source bitmap would
+            // unwrap to nearly full screen.
+            width = size
+            height = size
             gravity = Gravity.TOP or Gravity.START
             // The bubble starts parked near the middle of the right screen edge (the launcher runs
             // landscape only); afterwards the drag positions are absolute window coordinates.
@@ -214,10 +226,6 @@ class ActionBubbleService : Service() {
     private fun showPanel() {
         if (panelWindow != null) return
         val density = resources.displayMetrics.density
-
-        // The back row is built first and pinned outside the scrollable area below, so it stays
-        // visible even on screens too short for the whole panel.
-        val backRow = actionButton("\u2190  BACK") { collapsePanel() }
 
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -241,17 +249,32 @@ class ActionBubbleService : Service() {
         )
         root.addView(spacer(10f))
 
-        // The radios cannot be flipped by non-system apps on modern Android, so every toggle row
-        // shows the live state and opens the matching system panel with the value mirrored over.
-        root.addView(toggleRow("wifi", "WIFI") { openWifiSettings() })
-        root.addView(toggleRow("bluetooth", "BLUETOOTH") { openBluetoothSettings() })
-        root.addView(toggleRow("airplane", "AIRPLANE MODE") { openAirplaneSettings() })
-        root.addView(toggleRow("dnd", "DO NOT DISTURB") { toggleDnd() })
-        root.addView(spacer(6f))
+        // The radio toggles sit in a 2 by 2 icon grid. The radios cannot be flipped by non-system
+        // apps on modern Android, so every tile shows the live state and opens the matching system
+        // panel with the value mirrored over.
+        root.addView(
+            gridRow(
+                toggleCell("wifi", "W", "Wi-Fi", R.drawable.wifi) { openWifiSettings() },
+                toggleCell("bluetooth", "B", "Bluetooth", R.drawable.video) { openBluetoothSettings() },
+            ),
+        )
+        root.addView(
+            gridRow(
+                toggleCell("airplane", "A", "Airplane mode", R.drawable.plane) { openAirplaneSettings() },
+                toggleCell("dnd", "D", "Do not disturb", R.drawable.do_not_disturb) { toggleDnd() },
+            ),
+        )
 
-        root.addView(actionButton("HOME") { openLauncher(MainActivity.TARGET_HOME) })
-        root.addView(spacer(6f))
-
+        // Both sliders share their apply logic between a real touch drag and the chunky D-pad
+        // key steps, so the two input paths cannot drift apart.
+        val applyVolume: (Int) -> Unit = { level ->
+            try {
+                audio.setStreamVolume(AudioManager.STREAM_MUSIC, level, 0)
+            } catch (_: Exception) {
+                // A stream that refuses the volume (e.g. actually muted by DND) simply
+                // keeps its old value.
+            }
+        }
         val volumeBar = SeekBar(this).apply {
             max = audio.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
             progress = try {
@@ -260,16 +283,9 @@ class ActionBubbleService : Service() {
                 0
             }
             tintTrack()
-            setOnKeyListener(backCatcher)
             setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
                 override fun onProgressChanged(bar: SeekBar, value: Int, fromUser: Boolean) {
-                    if (!fromUser) return
-                    try {
-                        audio.setStreamVolume(AudioManager.STREAM_MUSIC, value, 0)
-                    } catch (_: Exception) {
-                        // A stream that refuses the volume (e.g. actually muted by DND) simply
-                        // keeps its old value.
-                    }
+                    if (fromUser) applyVolume(value)
                 }
 
                 override fun onStartTrackingTouch(bar: SeekBar) = Unit
@@ -277,27 +293,35 @@ class ActionBubbleService : Service() {
                 override fun onStopTrackingTouch(bar: SeekBar) = Unit
             })
         }
-        root.addView(sliderRow("VOLUME", volumeBar))
+        root.addView(
+            sliderRow(
+                "V",
+                "Volume",
+                R.drawable.volume_up,
+                volumeBar,
+                seekKeyHandler(volumeBar, VOLUME_SEEK_DPAD_STEP, applyVolume),
+            ),
+        )
 
+        // The brightness apply logic lives on this holder and is filled in with the bar as its
+        // receiver right below, so the change listener and the D-pad key handler share the exact
+        // same permission / write behaviour.
+        var applyBrightness: ((Int) -> Unit)? = null
         val brightnessBar = SeekBar(this).apply {
             max = BRIGHTNESS_SEEK_MAX
             progress = readBrightnessLevel(BRIGHTNESS_SEEK_MAX)
             tintTrack()
-            setOnKeyListener(backCatcher)
             var promptedWriteSetting = false
-            setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
-                override fun onProgressChanged(bar: SeekBar, value: Int, fromUser: Boolean) {
-                    if (!fromUser) return
-                    if (!Settings.System.canWrite(this@ActionBubbleService)) {
-                        // Snap back to the real system value and ask for the permission once per
-                        // drag; the slider becomes live right after the user grants it.
-                        bar.progress = readBrightnessLevel(BRIGHTNESS_SEEK_MAX)
-                        if (!promptedWriteSetting) {
-                            promptedWriteSetting = true
-                            openSettingsScreen(Settings.ACTION_MANAGE_WRITE_SETTINGS)
-                        }
-                        return
+            applyBrightness = { value ->
+                if (!Settings.System.canWrite(this@ActionBubbleService)) {
+                    // Snap back to the real system value and ask for the permission once; the
+                    // slider becomes live right after the user grants it.
+                    progress = readBrightnessLevel(BRIGHTNESS_SEEK_MAX)
+                    if (!promptedWriteSetting) {
+                        promptedWriteSetting = true
+                        openSettingsScreen(Settings.ACTION_MANAGE_WRITE_SETTINGS)
                     }
+                } else {
                     try {
                         Settings.System.putInt(
                             contentResolver,
@@ -310,34 +334,63 @@ class ActionBubbleService : Service() {
                         // its old brightness.
                     }
                 }
+            }
+            setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+                override fun onProgressChanged(bar: SeekBar, value: Int, fromUser: Boolean) {
+                    if (fromUser) applyBrightness?.invoke(value)
+                }
 
                 override fun onStartTrackingTouch(bar: SeekBar) = Unit
 
                 override fun onStopTrackingTouch(bar: SeekBar) = Unit
             })
         }
-        root.addView(sliderRow("BRIGHTNESS", brightnessBar))
+        root.addView(
+            sliderRow(
+                "B",
+                "Brightness",
+                R.drawable.brightness,
+                brightnessBar,
+                seekKeyHandler(brightnessBar, BRIGHTNESS_SEEK_DPAD_STEP) { value ->
+                    applyBrightness?.invoke(value)
+                },
+            ),
+        )
+        root.addView(spacer(4f))
+
+        // The bottom navigation row: BACK and HOME side by side. BACK gets the initial focus.
+        val backButton = actionButton("\u2190  BACK") { collapsePanel() }
+        val homeButton = actionButton("HOME") { openLauncher(MainActivity.TARGET_HOME) }
+        root.addView(
+            gridRow(backButton, homeButton).apply {
+                // The navigation buttons keep the tile height so their tap targets stay stable.
+                (backButton.layoutParams as LinearLayout.LayoutParams).height =
+                    (ROW_HEIGHT_DP * density).toInt()
+                (homeButton.layoutParams as LinearLayout.LayoutParams).height =
+                    (ROW_HEIGHT_DP * density).toInt()
+            },
+        )
 
         refreshToggleStates()
 
-        // The BACK row is pinned below the scroll: measure the scrollable content at the panel's
-        // real width, then build the panel out of [pill back row][gap][scroll area] with explicit
-        // heights. The whole panel therefore always fits between the screen edges - never a
-        // clipped bottom row, and the back control is always on screen.
+        // Measure the content at the panel's real width and wrap it in a scroll area with an
+        // explicit height so the panel always fits between the screen edges - never a clipped row.
         val widthPx = (PANEL_WIDTH_DP * density).toInt()
         val contentW = widthPx - 2 * (8 * density).toInt()
         root.measure(
             View.MeasureSpec.makeMeasureSpec(contentW, View.MeasureSpec.EXACTLY),
             View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED),
         )
-        val backPx = (ROW_HEIGHT_DP * density).toInt()
-        val backGapPx = (8 * density).toInt()
         val vPad = (8 * density).toInt()
         val screenH = resources.displayMetrics.heightPixels
         val screenMargin = (8 * density).toInt()
-        val availableH = maxOf(backPx + backGapPx, screenH - 2 * screenMargin - 2 * vPad)
-        val scrollH = minOf(root.measuredHeight, availableH - backPx - backGapPx).coerceAtLeast(backPx)
-        val panelH = 2 * vPad + backPx + backGapPx + scrollH
+        val availableH = maxOf(
+            (ROW_HEIGHT_DP * density).toInt(),
+            screenH - 2 * screenMargin - 2 * vPad,
+        )
+        val scrollH = minOf(root.measuredHeight, availableH)
+            .coerceAtLeast((ROW_HEIGHT_DP * density).toInt())
+        val panelH = 2 * vPad + scrollH
 
         val scroll = ScrollView(this).apply {
             isVerticalScrollBarEnabled = true
@@ -356,13 +409,6 @@ class ActionBubbleService : Service() {
             setPadding(vPad, vPad, vPad, vPad)
         }
         panel.addView(
-            backRow,
-            LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                backPx,
-            ).apply { bottomMargin = backGapPx },
-        )
-        panel.addView(
             scroll,
             LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
@@ -373,8 +419,8 @@ class ActionBubbleService : Service() {
         panelParams = panelAnchorParams(panelH)
         windowManager.addView(panel, panelParams)
         panelWindow = panel
-        // With the panel attached, put the D-pad focus onto the first toggle row.
-        viewRegisters.values.firstOrNull()?.requestFocus()
+        // BACK is the default landing point of the panel: one push of the remote closes it.
+        backButton.requestFocus()
     }
 
     private fun collapsePanel() {
@@ -383,7 +429,7 @@ class ActionBubbleService : Service() {
         panelParams = null
         statusRegisters.clear()
         viewRegisters.clear()
-        labelRegisters.clear()
+        iconRegisters.clear()
     }
 
     /** Anchors the panel next to wherever the bubble currently sits; to its left when it fits. */
@@ -419,65 +465,131 @@ class ActionBubbleService : Service() {
 
     // -------------------------------------------------------------------------------- row views
 
-    private fun toggleRow(key: String, label: String, onClick: () -> Unit): View {
+    /**
+     * Places two views side by side with equal weight; the icon grid rows and the BACK|HOME
+     * navigation row are built with it.
+     */
+    private fun gridRow(first: View, second: View): LinearLayout {
         val density = resources.displayMetrics.density
-        val row = LinearLayout(this).apply {
+        return LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-            setPadding((12 * density).toInt(), 0, (12 * density).toInt(), 0)
-            isClickable = true
             layoutParams = LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
-                (ROW_HEIGHT_DP * density).toInt(),
+                ViewGroup.LayoutParams.WRAP_CONTENT,
             ).apply { bottomMargin = (6 * density).toInt() }
+        }.apply {
+            addView(
+                first,
+                LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+                    .apply { marginEnd = (6 * density).toInt() },
+            )
+            addView(
+                second,
+                LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f),
+            )
+        }
+    }
+
+    /**
+     * One toggle tile of the icon grid: an icon placeholder and the ON/OFF status sit in the
+     * tile's header row, while the live state shading paints the whole tile [styleToggleRow].
+     */
+    private fun toggleCell(
+        key: String,
+        initial: String,
+        description: String,
+        iconRes: Int? = null,
+        onClick: () -> Unit,
+    ): View {
+        val density = resources.displayMetrics.density
+        val cell = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(
+                (10 * density).toInt(),
+                (8 * density).toInt(),
+                (10 * density).toInt(),
+                (8 * density).toInt(),
+            )
+            isClickable = true
+            contentDescription = description
         }
 
-        val text = TextView(this).apply {
-            this.text = label
-            textSize = 12f
-            typeface = Typeface.DEFAULT_BOLD
-            letterSpacing = 0.08f
-            setTextColor(TEXT_PRIMARY)
-            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+        val iconRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
         }
+        val icon = iconPlaceholder(initial, description, iconRes)
         val status = TextView(this).apply {
             textSize = 11f
             typeface = Typeface.DEFAULT_BOLD
             letterSpacing = 0.08f
             setTextColor(TEXT_SECONDARY)
+            gravity = Gravity.END
+            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
         }
-        row.addView(text)
-        row.addView(status)
+        iconRow.addView(icon)
+        iconRow.addView(status)
+        cell.addView(iconRow)
 
-        // The rows have to know their key so the shared styling can shade the ones whose feature
-        // is currently on.
-        viewRegisters[key] = row
+        // The cells have to know their key so the shared styling can shade the ones whose
+        // feature is currently on.
+        viewRegisters[key] = cell
         statusRegisters[key] = status
-        labelRegisters[key] = text
+        iconRegisters[key] = icon
 
-        row.setOnClickListener {
+        cell.setOnClickListener {
             onClick()
             refreshToggleStates()
         }
-        row.setOnKeyListener(backCatcher)
-        row.onFocusChangeListener = View.OnFocusChangeListener { _, hasFocus ->
+        cell.setOnKeyListener(backCatcher)
+        cell.onFocusChangeListener = View.OnFocusChangeListener { _, hasFocus ->
             styleToggleRow(key, hasFocus)
         }
-        styleToggleRow(key, row.isFocused)
-        return row
+        styleToggleRow(key, cell.isFocused)
+        return cell
     }
 
     /**
-     * Shared look of one toggle row, combining three layers:
+     * The icon of a tile: a real vector drawable once it was provided, or a placeholder— a small
+     * rounded square with the feature initial—until then.
+     */
+    private fun iconPlaceholder(initial: String, description: String, iconRes: Int? = null): View {
+        val density = resources.displayMetrics.density
+        val size = LinearLayout.LayoutParams(
+            (24 * density).toInt(),
+            (24 * density).toInt(),
+        )
+        if (iconRes != null) {
+            return ImageView(this).apply {
+                setImageResource(iconRes)
+                imageTintList = ColorStateList.valueOf(TEXT_PRIMARY)
+                contentDescription = description
+                layoutParams = size
+            }
+        }
+        return TextView(this).apply {
+            text = initial
+            textSize = 12f
+            typeface = Typeface.DEFAULT_BOLD
+            gravity = Gravity.CENTER
+            setTextColor(TEXT_PRIMARY)
+            background = rounded(intArrayOf(ICON_BG, ICON_BG), radiusDp = 8f, strokeColor = STROKE)
+            contentDescription = description
+            layoutParams = size
+        }
+    }
+
+    /**
+     * Shared look of one toggle tile, combining three layers:
      *
-     *  - the feature is ON: the whole row carries a shaded accent wash, an accent stroke and an
+     *  - the feature is ON: the whole tile carries a shaded accent wash, an accent stroke and an
      *    accent-colored status text, so the state is readable from across the room;
-     *  - the row has the D-pad focus: the full accent highlight on top (like the launcher tiles);
+     *  - the tile has the D-pad focus: the full accent highlight on top (like the launcher tiles);
      *  - otherwise: the neutral surface look.
      */
     private fun styleToggleRow(key: String, focused: Boolean) {
-        val row = viewRegisters[key] ?: return
-        val label = labelRegisters[key] ?: return
+        val cell = viewRegisters[key] ?: return
+        val icon = iconRegisters[key] ?: return
         val status = statusRegisters[key] ?: return
 
         val on = status.text == "ON"
@@ -487,15 +599,23 @@ class ActionBubbleService : Service() {
             else -> SURFACE
         }
         val stroke = if (focused || on) ACCENT else STROKE
-        row.background = rounded(intArrayOf(background, background), radiusDp = 12f, strokeColor = stroke)
+        cell.background = rounded(intArrayOf(background, background), radiusDp = 12f, strokeColor = stroke)
 
         if (focused) {
             // On the full accent focus highlight everything flips to the dark "on accent" ink.
-            label.setTextColor(ON_ACCENT)
+            paintIcon(icon, ON_ACCENT)
             status.setTextColor(ON_ACCENT)
         } else {
-            label.setTextColor(if (on) ACCENT else TEXT_PRIMARY)
+            paintIcon(icon, if (on) ACCENT else TEXT_PRIMARY)
             status.setTextColor(if (on) ACCENT else TEXT_SECONDARY)
+        }
+    }
+
+    /** Paints the icon in the shared color, whether it is a placeholder text or a vector image. */
+    private fun paintIcon(icon: View, color: Int) {
+        when (icon) {
+            is TextView -> icon.setTextColor(color)
+            is ImageView -> icon.imageTintList = ColorStateList.valueOf(color)
         }
     }
 
@@ -519,39 +639,98 @@ class ActionBubbleService : Service() {
         return button
     }
 
-    private fun sliderRow(label: String, bar: SeekBar): View {
+    /**
+     * A slider row: the icon on the left of the live-seeking bar. The whole row is the D-pad
+     * focus target (with the same selected look as the tiles) while the SeekBar itself is not
+     * focusable: left / right changes the value through the row's key handler, so the highlight
+     * wraps the full "volume" / "brightness" control while it is being selected. Touch drags on
+     * the bar keep working without focus.
+     */
+    private fun sliderRow(
+        initial: String,
+        description: String,
+        iconRes: Int? = null,
+        bar: SeekBar,
+        keyHandler: View.OnKeyListener? = null,
+    ): View {
         val density = resources.displayMetrics.density
         val row = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
+            setPadding((10 * density).toInt(), 0, (10 * density).toInt(), 0)
+            isFocusable = true
             layoutParams = LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 (ROW_HEIGHT_DP * density).toInt(),
             ).apply { bottomMargin = (6 * density).toInt() }
         }
 
-        row.addView(
-            TextView(this).apply {
-                text = label
-                textSize = 11f
-                typeface = Typeface.DEFAULT_BOLD
-                letterSpacing = 0.06f
-                setTextColor(TEXT_PRIMARY)
-                layoutParams = LinearLayout.LayoutParams(
-                    (52 * density).toInt(),
-                    ViewGroup.LayoutParams.WRAP_CONTENT,
-                )
-            },
-        )
+        val icon = iconPlaceholder(initial, description, iconRes)
+        row.addView(icon)
+        bar.isFocusable = false
         bar.layoutParams = LinearLayout.LayoutParams(
             0,
             ViewGroup.LayoutParams.WRAP_CONTENT,
             1f,
-        ).apply { leftMargin = (6 * density).toInt() }
+        ).apply { leftMargin = (10 * density).toInt() }
         row.addView(bar)
-        row.setOnKeyListener(backCatcher)
+
+        row.onFocusChangeListener = View.OnFocusChangeListener { _, hasFocus ->
+            styleSliderRow(row, icon, hasFocus)
+        }
+        if (keyHandler != null) row.setOnKeyListener(keyHandler)
+        styleSliderRow(row, icon, row.isFocused)
         return row
     }
+
+    /**
+     * The selected look of a slider row: instead of the tiles' full accent flood (which would
+     * hide the accent-filled track), the row gets the accent wash with an accent stroke, so it
+     * reads as picked while the slider stays visible.
+     */
+    private fun styleSliderRow(row: View, icon: View, focused: Boolean) {
+        val background = if (focused) TINT_ON else SURFACE
+        row.background = rounded(
+            intArrayOf(background, background),
+            radiusDp = 12f,
+            strokeColor = if (focused) ACCENT else STROKE,
+        )
+        paintIcon(icon, if (focused) ACCENT else TEXT_PRIMARY)
+    }
+
+    /**
+     * D-pad handling for one slider: BACK / B collapses the panel, left / right applies a chunky
+     * step instead of the SeekBar's single-unit nudge (a 100-step bar would otherwise take a
+     * hundred remote presses to cross). Returning false at the bar's edges lets the focus keep
+     * travelling up / out.
+     */
+    private fun seekKeyHandler(bar: SeekBar, step: Int, apply: (Int) -> Unit): View.OnKeyListener =
+        View.OnKeyListener { _, keyCode, event ->
+            if (event.action != KeyEvent.ACTION_DOWN) {
+                false
+            } else {
+                when (keyCode) {
+                    KeyEvent.KEYCODE_BACK, KeyEvent.KEYCODE_BUTTON_B -> {
+                        collapsePanel()
+                        true
+                    }
+
+                    KeyEvent.KEYCODE_DPAD_LEFT, KeyEvent.KEYCODE_DPAD_RIGHT -> {
+                        val direction = if (keyCode == KeyEvent.KEYCODE_DPAD_LEFT) -1 else 1
+                        val target = (bar.progress + direction * step).coerceIn(0, bar.max)
+                        if (target == bar.progress) {
+                            false
+                        } else {
+                            bar.progress = target
+                            apply(target)
+                            true
+                        }
+                    }
+
+                    else -> false
+                }
+            }
+        }
 
     /** Shared focus styling: every row highlights like the launcher tiles when it gets the focus. */
     private fun applyRowStyle(view: View, focusedBg: Int = ACCENT) {
@@ -746,10 +925,14 @@ class ActionBubbleService : Service() {
         }
 
     private companion object {
-        const val BUBBLE_SIZE_DP = 56f
+        const val BUBBLE_SIZE_DP = 34f
         const val EDGE_MARGIN_DP = 16f
         const val PANEL_WIDTH_DP = 248f
         const val ROW_HEIGHT_DP = 44f
+
+        /** Chunky D-pad steps so the sliders stay remote-friendly (a touch drag stays 1:1). */
+        const val VOLUME_SEEK_DPAD_STEP = 3
+        const val BRIGHTNESS_SEEK_DPAD_STEP = 10
 
         const val BRIGHTNESS_SEEK_MAX = 100
         const val BRIGHTNESS_MIN = 10
@@ -761,6 +944,7 @@ class ActionBubbleService : Service() {
         /** The surface blended ~25% into the accent: the "feature is on" shade of the toggle rows. */
         const val TINT_ON = 0xFF2D4562.toInt()
         const val ON_ACCENT = 0xFF06101F.toInt()
+        const val ICON_BG = 0xFF2B303A.toInt()
         const val PANEL_BG = 0xE6161A20.toInt()
         const val STROKE = 0xFF343A45.toInt()
         const val TEXT_PRIMARY = 0xFFE8EBF0.toInt()
